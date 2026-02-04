@@ -95,15 +95,15 @@ class WS2FileCompiler:
             for line in self.lines:
                 line = line.strip()
                 
-                # 1. 过滤掉空行和注释行
+                # 过滤掉空行和注释行
                 if not line or line.startswith("//"):
                     continue
                     
-                # 2. 分割数据块
+                # 分割数据块
                 # 格式预期: @偏移量|#指令|类型::值|...|
                 contents = line.split("|")
                 
-                # 3. 基础格式校验：确保至少包含偏移量和指令码
+                # 基础格式校验：确保至少包含偏移量和指令码
                 if len(contents) < 2 or not contents[0].startswith("@"):
                     continue
 

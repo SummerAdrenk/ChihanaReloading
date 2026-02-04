@@ -3,7 +3,6 @@ from WS2FILE import *
 from enc_dec_ws2 import *
 import os
 
-# 手动输入路径
 oriPath = input("请输入原始解包文本路径 (Rio_dump): ")
 transPath = input("请输入已翻译的 JSON 路径 (gt_output): ")
 outPath = input("请输入生成的二进制文件输出路径 (release\\rio): ")
