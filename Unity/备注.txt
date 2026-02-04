@@ -1,0 +1,32 @@
+arc_unpack.py：解包
+arc_pack.py：封包
+UnityFS.py：处理封包内的UnityFS容器文本
+UnityFS_pic_v2.py：处理后缀为.bytes的UnityFS图片容器，特征为图片在TextAsset内，为TextAsset类型
+UnityFS_extract.py：无后缀类型的UnityFS容器提取，注意为半成品，目前字体不能正常提取
+其他不用管
+
+Unity工具：
+#UnityHub以及Unity各版本编辑器下载
+https://www.nounitycn.top/
+#Unity大陆封锁绕过
+https://github.com/cloud-oc/GlobalUnityInstaller
+#字符集资源包：Unity-Game-localization-tutorial-and-toolkit
+https://github.com/mskgroup/Unity-Game-localization-tutorial-and-toolkit
+#AssetBundleExtractor
+https://github.com/laijingquan/AssetBundleExtractor
+#uabea
+https://github.com/nesrak1/UABEA
+#AssetStudio
+https://github.com/Perfare/AssetStudio
+
+备注：以下均由UABEA实现替换sharedassets0.assets
+常规：ttf/otf字体替换
+TM（TextMesh）：Font Texture【位图替换，需要Unity】与字体文件（实际上是字体配置文件）【2个PathID与字体名】替换
+TMP（TextMeshPro）：SDF三件套，具体看ju佬视频，修改位图+所有PathID+字体名+字体家族名
+其他非常规的需要导入TMP组件，吾爱应该有
+
+育乳正则：
+01_search=^setname\(.+,"(?P<name>.+?)"
+02_search=^text\("(.+)"\)
+
+01_search=	"(.+)",
