@@ -23,7 +23,3 @@
 ## **♯ Changelog**
 
 > Ver1.0.0 : Base version compatible with Ver2.1.0.0 AdvHD Engine (U16LE text)
-
-## **♯ Test**
-> - [ensemble SWEET]ラブラブお痴験バイト性活 -怪しいクスリでフル勃〇！モテまくりヤリまくりで人生大逆転-
-> - [とこはな]OfficeLove -クールな先輩彼女と秘密のイキ抜き-体验版
