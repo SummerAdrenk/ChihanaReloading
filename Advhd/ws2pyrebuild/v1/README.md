@@ -1,7 +1,7 @@
-﻿# **🍞 AdvHD Engine WS2 Tools (Support Ver2.1.0.0+)**
+﻿# **🍞 AdvHD Engine WS2 Tools (Support Ver1.x.x.x)**
 
 > - **Original project by jyxjyx1234: https://github.com/jyxjyx1234**  
-> - **Modified to support the AdvHD engine v2.1.0.0**  
+> - **Modified to support the AdvHD engine v1.x.x.x**  
 > - **Requirement: Python 3.10+**
 > - **Please note that my skills are limited, so please excuse any potential errors**
 
@@ -22,4 +22,4 @@
 
 ## **♯ Changelog**
 
-> Ver1.0.0 : Base version compatible with Ver2.1.0.0 AdvHD Engine (U16LE text)
+> Ver1.0.0 : Base version compatible with Ver1.x.x.x AdvHD Engine (sjis text)
