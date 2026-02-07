@@ -13,7 +13,7 @@ namespace AdvhdPictureTool
             if (!Directory.Exists(basePath))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"错误: 目标目录 '{basePath}' 不存在。");
+                Console.WriteLine($"[ERROR] 目标目录 '{basePath}' 不存在。");
                 Console.ResetColor();
                 return;
             }
@@ -24,11 +24,11 @@ namespace AdvhdPictureTool
 
             if (!sourceDirs.Any())
             {
-                Console.WriteLine($"在 '{basePath}' 目录及其子目录中未找到任何 png 文件夹。");
+                Console.WriteLine($"[WARNNING] 在 '{basePath}' 目录及其子目录中未找到任何 png 文件夹。");
                 return;
             }
 
-            Console.WriteLine($"\n==> 开始清除指定目录下png文件夹内的PNG像素:  '{basePath}'");
+            Console.WriteLine($"\n>> 开始清除指定目录下png文件夹内的PNG像素:  '{basePath}'");
 
             int totalSuccess = 0;
             int totalFailure = 0;
@@ -48,8 +48,8 @@ namespace AdvhdPictureTool
                 string clearDir = Path.Combine(formatDir, "clear");
                 Directory.CreateDirectory(clearDir);
 
-                Console.WriteLine($"\n==> 正在处理: {sourceDir}");
-                Console.WriteLine($"\n==> 输出到: {clearDir}");
+                Console.WriteLine($"\n>> 正在处理: {sourceDir}");
+                Console.WriteLine($"\n>> 输出到: {clearDir}");
 
                 int currentSuccess = 0;
                 int currentFailure = 0;
@@ -72,7 +72,7 @@ namespace AdvhdPictureTool
                     catch (Exception ex)
                     {
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"处理文件 '{Path.GetFileName(file)}' 时出错: {ex.Message}");
+                        Console.WriteLine($"[WARNNING] 处理文件 '{Path.GetFileName(file)}' 时出错: {ex.Message}");
                         Console.ResetColor();
                         Interlocked.Increment(ref currentFailure);
                     }

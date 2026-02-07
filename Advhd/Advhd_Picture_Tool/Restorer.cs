@@ -26,7 +26,7 @@ public static class Restorer
 
         RestoreFromNewFolders(workDir, finishDir);
 
-        Console.WriteLine("\n-- 开始补充未修改的原始文件 --");
+        Console.WriteLine("\n>>> 开始补充未修改的原始文件");
         int replenishedCount = 0;
         var origDirs = Directory.EnumerateDirectories(workDir, "orig", SearchOption.AllDirectories);
 
@@ -70,7 +70,7 @@ public static class Restorer
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"补充文件 '{Path.GetFileName(origFile)}' 时失败: {ex.Message}");
+                    Console.WriteLine($"[WARNNING] 补充文件 '{Path.GetFileName(origFile)}' 时失败: {ex.Message}");
                 }
             }
         }
@@ -87,7 +87,7 @@ public static class Restorer
 
         if (Directory.Exists(finishDir))
         {
-            Console.WriteLine("警告: finish 目录已存在，其中的内容可能会被覆盖。");
+            Console.WriteLine("[WARNNING] finish 目录已存在，其中的内容可能会被覆盖。");
         }
         Directory.CreateDirectory(finishDir);
         return finishDir;
@@ -96,7 +96,7 @@ public static class Restorer
     private static void RestoreFromNewFolders(string workDir, string finishDir)
     {
         var newDirs = Directory.EnumerateDirectories(workDir, "new", SearchOption.AllDirectories);
-        Console.WriteLine("-- 正在还原已修改的文件 --");
+        Console.WriteLine(">> 正在还原已修改的文件");
 
         foreach (var newDir in newDirs)
         {
@@ -122,7 +122,7 @@ public static class Restorer
 
                     if (!File.Exists(jsonFile))
                     {
-                        Console.WriteLine($"警告: 找不到 \"{baseName}\" 的元数据，将直接复制到根目录。");
+                        Console.WriteLine($"[WARNNING] 找不到 \"{baseName}\" 的元数据，将直接复制到根目录。");
                         string destFileDirect = Path.Combine(finishDir, baseName);
                         File.Copy(file, destFileDirect, true);
                         continue;
@@ -132,7 +132,7 @@ public static class Restorer
                     var metadata = JsonSerializer.Deserialize<BaseMetadata>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
                     if (metadata == null || string.IsNullOrEmpty(metadata.OriginalRelativePath))
-                        throw new Exception("元数据中缺少 OriginalRelativePath 字段。");
+                        throw new Exception("[WARNNING] 元数据中缺少 OriginalRelativePath 字段。");
 
                     string destFile = Path.Combine(finishDir, metadata.OriginalRelativePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
@@ -140,7 +140,7 @@ public static class Restorer
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"还原文件 \"{Path.GetFileName(file)}\" 时失败: {ex.Message}");
+                    Console.WriteLine($"[WARNNING] 还原文件 \"{Path.GetFileName(file)}\" 时失败: {ex.Message}");
                 }
             }
         }

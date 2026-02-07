@@ -25,7 +25,7 @@ public static class FileConverter
             }
             else
             {
-                Console.WriteLine($"错误: 未知的格式目录 '{formatTag}'");
+                Console.WriteLine($"[ERROR] 未知的格式目录 '{formatTag}'");
             }
         }
         else
@@ -60,7 +60,7 @@ public static class FileConverter
                 }
                 else
                 {
-                    Console.WriteLine($"\n-- 在 {handler.Tag.ToUpper()} 目录中未找到 'fix' 文件夹或该文件夹为空，已跳过。 --");
+                    Console.WriteLine($"\n[WARNNING] 在 {handler.Tag.ToUpper()} 目录中未找到 'fix' 文件夹或该文件夹为空，已跳过。");
                 }
             }
         }
@@ -88,7 +88,7 @@ public static class FileConverter
 
         if (!Directory.Exists(fixDir) || !new DirectoryInfo(fixDir).Name.Equals("fix", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("错误: 提供的路径不是一个有效的 'fix' 文件夹。");
+            Console.WriteLine("[ERROR] 提供的路径不是一个有效的 'fix' 文件夹。");
             return;
         }
 
@@ -101,7 +101,7 @@ public static class FileConverter
         }
         else
         {
-            Console.WriteLine($"错误: 未能根据目录 '{formatTag}' 识别出对应的处理器。");
+            Console.WriteLine($"[ERROR] 未能根据目录 '{formatTag}' 识别出对应的处理器。");
         }
     }
     private static void ProcessConvertFormat(string formatDir, IFormatHandler handler)
@@ -113,7 +113,7 @@ public static class FileConverter
         if (!Directory.Exists(origDir)) return;
         Directory.CreateDirectory(pngDir);
 
-        Console.WriteLine($"\n-- 正在处理 {handler.Tag.ToUpper()} 文件 --");
+        Console.WriteLine($"\n>> 正在处理 {handler.Tag.ToUpper()} 文件");
 
         var files = Directory.GetFiles(origDir, "*.*", SearchOption.AllDirectories).ToList();
         int total = files.Count;
@@ -141,7 +141,7 @@ public static class FileConverter
 
                 if (!File.Exists(metaPath))
                 {
-                    throw new FileNotFoundException($"找不到由sorter创建的基础元数据文件: {metaPath}");
+                    throw new FileNotFoundException($"[ERROR] 找不到由sorter创建的基础元数据文件: {metaPath}");
                 }
 
                 object handlerMetadata = handler.Convert(file, destPathBase);
@@ -163,7 +163,7 @@ public static class FileConverter
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"转换文件 '{Path.GetFileName(file)}' 时出错: {ex.Message}");
+                Console.WriteLine($"[ERROR] 转换文件 '{Path.GetFileName(file)}' 时出错: {ex.Message}");
                 Interlocked.Increment(ref failure);
             }
         });
@@ -178,7 +178,7 @@ public static class FileConverter
         if (!Directory.Exists(sourceDir) || !Directory.Exists(metaDir)) return;
         Directory.CreateDirectory(newDir);
 
-        Console.WriteLine($"\n-- 正在从 \"{new DirectoryInfo(sourceDir).Name}\" 目录为 {handler.Tag.ToUpper()} 格式重新打包 --");
+        Console.WriteLine($"\n>> 正在从 \"{new DirectoryInfo(sourceDir).Name}\" 目录为 {handler.Tag.ToUpper()} 格式重新打包");
 
         if (handler is PnaHandler)
         {
@@ -195,7 +195,7 @@ public static class FileConverter
 
                     if (!File.Exists(metadataPath))
                     {
-                        Console.WriteLine($"警告: 找不到项目 \"{mangledFileName}\" 的元数据，已跳过。");
+                        Console.WriteLine($"[WARNNING] 找不到项目 \"{mangledFileName}\" 的元数据，已跳过。");
                         Interlocked.Increment(ref failure);
                         return;
                     }
@@ -216,7 +216,7 @@ public static class FileConverter
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"重新打包 PNA \"{Path.GetFileName(dir)}\" 时出错: {ex.Message}");
+                    Console.WriteLine($"[ERROR] 重新打包 PNA \"{Path.GetFileName(dir)}\" 时出错: {ex.Message}");
                     Interlocked.Increment(ref failure);
                 }
             });
@@ -237,7 +237,7 @@ public static class FileConverter
 
                     if (!File.Exists(metadataPath))
                     {
-                        Console.WriteLine($"警告: 找不到项目 \"{Path.GetFileName(file)}\" 的元数据，已跳过。");
+                        Console.WriteLine($"[WARNNING] 找不到项目 \"{Path.GetFileName(file)}\" 的元数据，已跳过。");
                         Interlocked.Increment(ref failure);
                         return;
                     }
@@ -255,7 +255,7 @@ public static class FileConverter
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"重新打包文件 \"{Path.GetFileName(file)}\" 时出错: {ex.Message}");
+                    Console.WriteLine($"[ERROR] 重新打包文件 \"{Path.GetFileName(file)}\" 时出错: {ex.Message}");
                     Interlocked.Increment(ref failure);
                 }
             });

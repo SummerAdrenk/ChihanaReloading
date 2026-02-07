@@ -44,57 +44,57 @@ class Program
                 switch (command)
                 {
                     case "-sort":
-                        if (inputArgs.Length != 3) { Console.WriteLine("错误: -sort 指令需要[源目录]和[分类目录]两个参数。"); break; }
+                        if (inputArgs.Length != 3) { Console.WriteLine("[ERROR] -sort 指令需要[源目录]和[分类目录]两个参数。"); break; }
                         FileSorter.Sort(inputArgs[1], inputArgs[2]);
                         break;
 
                     case "-convert":
-                        if (inputArgs.Length != 2) { Console.WriteLine("错误: -convert 指令需要一个[目录]参数。"); break; }
+                        if (inputArgs.Length != 2) { Console.WriteLine("[ERROR] -convert 指令需要一个[目录]参数。"); break; }
                         FileConverter.ConvertAll(inputArgs[1]);
                         break;
 
                     case "-repack":
-                        if (inputArgs.Length != 2) { Console.WriteLine("错误: -repack 指令需要一个[目录]参数。"); break; }
+                        if (inputArgs.Length != 2) { Console.WriteLine("[ERROR] -repack 指令需要一个[目录]参数。"); break; }
                         FileConverter.RepackAll(inputArgs[1]);
                         break;
 
                     case "-repack-fix":
-                        if (inputArgs.Length != 2) { Console.WriteLine("错误: -repack-fix 指令需要一个[fix目录]参数。"); break; }
+                        if (inputArgs.Length != 2) { Console.WriteLine("[ERROR] -repack-fix 指令需要一个[fix目录]参数。"); break; }
                         FileConverter.RepackFix(inputArgs[1]);
                         break;
 
                     case "-restore":
-                        if (inputArgs.Length != 3) { Console.WriteLine("错误: -restore 指令需要[分类目录]和[输出目录]两个参数。"); break; }
+                        if (inputArgs.Length != 3) { Console.WriteLine("[ERROR] -restore 指令需要[分类目录]和[输出目录]两个参数。"); break; }
                         Restorer.Restore(inputArgs[1], inputArgs[2]);
                         break;
 
                     case "-restore-replenish":
-                        if (inputArgs.Length != 3) { Console.WriteLine("错误: -restore-replenish 指令需要[分类目录]和[输出目录]两个参数。"); break; }
+                        if (inputArgs.Length != 3) { Console.WriteLine("[ERROR] -restore-replenish 指令需要[分类目录]和[输出目录]两个参数。"); break; }
                         Restorer.RestoreWithReplenish(inputArgs[1], inputArgs[2]);
                         break;
                     case "-merge-cg":
-                        if (inputArgs.Length != 3) { Console.WriteLine("错误: -merge-cg 指令需要[ap-2目录]和[bmp目录]两个参数。"); break; }
+                        if (inputArgs.Length != 3) { Console.WriteLine("[ERROR] -merge-cg 指令需要[ap-2目录]和[bmp目录]两个参数。"); break; }
                         //CgMerger.MergeCgFiles(inputArgs[1], inputArgs[2]);
                         break;
 
                     case "-repack-arc":
-                        if (inputArgs.Length < 2) { Console.WriteLine("错误: -repack-arc 指令至少需要一个[目标目录]参数。"); break; }
+                        if (inputArgs.Length < 2) { Console.WriteLine("[ERROR] -repack-arc 指令至少需要一个[目标目录]参数。"); break; }
                         AdvhdArcPacker.Pack(inputArgs);
                         break;
 
                     case "-unpack-arc":
-                        if (inputArgs.Length != 2) { Console.WriteLine("错误: -unpack-arc 指令需要一个[目标目录]参数。"); break; }
+                        if (inputArgs.Length != 2) { Console.WriteLine("[ERROR] -unpack-arc 指令需要一个[目标目录]参数。"); break; }
                         AdvhdArcPacker.Unpack(inputArgs);
                         break;
 
                     case "-clear":
-                        if (inputArgs.Length != 2) { Console.WriteLine("错误: -clear 指令需要一个[目标目录]参数。"); break; }
+                        if (inputArgs.Length != 2) { Console.WriteLine("[ERROR] -clear 指令需要一个[目标目录]参数。"); break; }
                         PixelClearer.ClearPixels(inputArgs[1]);
                         break;
 
                     default:
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"错误: 未知的指令 '{command}'");
+                        Console.WriteLine($"[ERROR] 未知的指令 '{command}'");
                         Console.ResetColor();
                         break;
                 }

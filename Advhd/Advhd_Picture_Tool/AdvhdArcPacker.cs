@@ -11,7 +11,7 @@ namespace AdvhdPictureTool
 
     public static class AdvhdArcPacker
     {
-        #region --- NEW: Unpack Functionality ---
+        #region Unpack Functionality
         public static void Unpack(string[] args)
         {
             string targetPath = args[1];
@@ -25,7 +25,7 @@ namespace AdvhdPictureTool
             else if (Directory.Exists(targetPath))
             {
                 // 批量目录模式
-                Console.WriteLine($"\n-- 开始以批量模式解包目录: {targetPath} --");
+                Console.WriteLine($"\n>> 开始批量解包目录: {targetPath}");
                 // 允许解包其他常见扩展名，而不仅仅是 .arc
                 var filesToUnpack = Directory.EnumerateFiles(targetPath)
                     .Where(f => f.EndsWith(".arc", StringComparison.OrdinalIgnoreCase) ||
@@ -52,7 +52,7 @@ namespace AdvhdPictureTool
                     catch (Exception ex)
                     {
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"\n解包文件 '{Path.GetFileName(arcFile)}' 时发生严重错误: {ex.Message}");
+                        Console.WriteLine($"\n[ERROR] 解包文件 '{Path.GetFileName(arcFile)}' 时发生严重错误: {ex.Message}");
                         Console.ResetColor();
                         failureCount++;
                     }
@@ -61,13 +61,13 @@ namespace AdvhdPictureTool
             }
             else
             {
-                Console.WriteLine($"错误: 路径 '{targetPath}' 不是一个有效的文件或目录。");
+                Console.WriteLine($"[ERROR] 路径 '{targetPath}' 不是一个有效的文件或目录。");
             }
         }
 
         private static void ExecuteUnpack(string arcPath, string outputDir, bool doDecrypt = false)
         {
-            Console.WriteLine($"\n--- 开始解包文件: {Path.GetFileName(arcPath)} ---");
+            Console.WriteLine($"\n>> 开始解包文件: {Path.GetFileName(arcPath)}");
             ClearDirectory(outputDir);
             Directory.CreateDirectory(outputDir);
 
@@ -77,13 +77,13 @@ namespace AdvhdPictureTool
                 int fileCount = reader.ReadInt32();
                 if (fileCount <= 0 || fileCount > 100000)
                 {
-                    throw new InvalidDataException($"文件数量 '{fileCount}' 无效，这可能不是一个有效的 .arc 文件。");
+                    throw new InvalidDataException($"[ERROR] 文件数量 '{fileCount}' 无效，这可能不是一个有效的 .arc 文件。");
                 }
                 uint indexSize = reader.ReadUInt32();
                 long baseOffset = 8 + indexSize;
                 if (baseOffset > fs.Length)
                 {
-                    throw new InvalidDataException($"索引大小 '{indexSize}' 无效，超出了文件长度。");
+                    throw new InvalidDataException($"[ERROR] 索引大小 '{indexSize}' 无效，超出了文件长度。");
                 }
 
 
@@ -96,7 +96,7 @@ namespace AdvhdPictureTool
                 // 读取索引
                 for (int i = 0; i < fileCount; i++)
                 {
-                    if (fs.Position >= currentIndexEnd) throw new InvalidDataException("索引读取超出边界。");
+                    if (fs.Position >= currentIndexEnd) throw new InvalidDataException("[ERROR] 索引读取超出边界。");
 
                     var entry = new ArcEntry
                     {
@@ -107,8 +107,6 @@ namespace AdvhdPictureTool
                     nameBuilder.Clear();
                     char c;
 
-                    // 直接读取2个字节并转换为char。
-                    // 确保无论BinaryReader的默认编码是什么，我们都能正确读取UTF-16字符。
                     while ((c = (char)reader.ReadUInt16()) != 0)
                     {
                         nameBuilder.Append(c);
@@ -118,14 +116,14 @@ namespace AdvhdPictureTool
                 }
 
                 // 提取文件
-                Console.WriteLine("--- 开始提取文件 ---");
+                Console.WriteLine(">> 开始提取文件");
                 foreach (var entry in directory)
                 {
                     Console.Write($"  -> 提取中: {entry.Name}");
                     if (entry.Offset + entry.Size > fs.Length)
                     {
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"...错误！文件偏移量或大小超出范围。");
+                        Console.WriteLine($"[ERROR] 文件偏移量或大小超出范围。");
                         Console.ResetColor();
                         continue;
                     }
@@ -161,12 +159,12 @@ namespace AdvhdPictureTool
 
         #endregion
 
-        #region --- Existing: Pack Functionality ---
+        #region Pack Functionality
         public static void Pack(string[] args)
         {
             if (args.Length < 2)
             {
-                Console.WriteLine("错误: 指令至少需要一个[目标目录]参数。");
+                Console.WriteLine("[ERROR] 指令至少需要一个[目标目录]参数。");
                 return;
             }
 
@@ -191,7 +189,7 @@ namespace AdvhdPictureTool
 
             if (!Directory.Exists(targetPath))
             {
-                Console.WriteLine($"错误: 目录 '{targetPath}' 不存在。");
+                Console.WriteLine($"[ERROR] 目录 '{targetPath}' 不存在。");
                 return;
             }
 
@@ -207,7 +205,7 @@ namespace AdvhdPictureTool
 
         private static void PackSingle(string directoryPath, string extension)
         {
-            Console.WriteLine($"\n-- 开始以单一模式封包: {directoryPath} --");
+            Console.WriteLine($"\n>> 开始以单一模式封包: {directoryPath}");
             string dirName = new DirectoryInfo(directoryPath).Name;
             string parentDir = Directory.GetParent(directoryPath)?.FullName ?? "";
             string outputPath = Path.Combine(parentDir, dirName + extension);
@@ -218,13 +216,13 @@ namespace AdvhdPictureTool
 
         private static void PackAll(string parentDirectoryPath, string extension)
         {
-            Console.WriteLine($"\n-- 开始以批量模式封包: {parentDirectoryPath} --");
+            Console.WriteLine($"\n>> 开始批量封包: {parentDirectoryPath}");
             var subDirectories = Directory.GetDirectories(parentDirectoryPath);
 
             if (subDirectories.Length == 0)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("错误: 批量模式下，目标目录中必须包含至少一个子文件夹用于封包。");
+                Console.WriteLine("[ERROR] 批量模式下，目标目录中必须包含至少一个子文件夹用于封包。");
                 Console.ResetColor();
                 return;
             }
@@ -251,11 +249,11 @@ namespace AdvhdPictureTool
         }
         private static void ExecutePack(string inputDir, string arcPath, bool doEncrypt = false)
         {
-            Console.WriteLine($"--- 开始封包文件夹: {inputDir} ---");
+            Console.WriteLine($">> 开始封包文件夹: {inputDir}");
             string[] filesToPack = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories);
             if (filesToPack.Length == 0)
             {
-                Console.WriteLine("[警告] 输入文件夹为空，未执行任何操作。");
+                Console.WriteLine("[WARNNING] 输入文件夹为空，未执行任何操作。");
                 return;
             }
             string? outputDirectory = Path.GetDirectoryName(arcPath);
@@ -279,7 +277,7 @@ namespace AdvhdPictureTool
             using (var writer = new BinaryWriter(fs, Encoding.Unicode))
             {
                 fs.Seek(baseOffset, SeekOrigin.Begin);
-                Console.WriteLine("--- 开始写入文件数据 ---");
+                Console.WriteLine(">> 开始写入文件数据");
                 foreach (var filePath in filesToPack)
                 {
                     string relativePath = Path.GetRelativePath(inputDir, filePath).Replace('\\', '/');
@@ -295,7 +293,7 @@ namespace AdvhdPictureTool
                     currentDataOffset += data.Length;
                     Console.WriteLine("...完成");
                 }
-                Console.WriteLine("--- 开始写入索引 ---");
+                Console.WriteLine(">> 开始写入索引");
                 fs.Seek(0, SeekOrigin.Begin);
                 writer.Write(directory.Count);
                 writer.Write(indexSize);

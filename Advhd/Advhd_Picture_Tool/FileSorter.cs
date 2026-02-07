@@ -12,7 +12,7 @@ namespace AdvhdPictureTool
             public string OriginalRelativePath { get; set; } = "";
         }
 
-        // 在此定义被-sort忽略的文件后缀
+        // 定义被-sort忽略的文件后缀
         private static readonly HashSet<string> ArchiveExtensionsToIgnore = new(StringComparer.OrdinalIgnoreCase)
         {
             ".arc",
@@ -36,7 +36,7 @@ namespace AdvhdPictureTool
             if (!Handlers.Any())
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("错误: 尚未注册任何格式处理器 (Handler)。请在 FileSorter.cs 中添加。");
+                Console.WriteLine("[ERROR] 尚未注册任何格式处理器 (Handler)。请在 FileSorter.cs 中添加。");
                 Console.ResetColor();
                 return;
             }
@@ -82,7 +82,7 @@ namespace AdvhdPictureTool
                             if (handledSet.Contains(currentMangledName))
                             {
                                 Console.ForegroundColor = ConsoleColor.Yellow;
-                                Console.WriteLine($"警告: 发现同名文件 '{currentMangledName}'，尝试附加目录以解决冲突...");
+                                Console.WriteLine($"[WARNNING] 发现同名文件 '{currentMangledName}'，尝试附加目录以解决冲突...");
                                 Console.ResetColor();
 
                                 var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
@@ -133,7 +133,7 @@ namespace AdvhdPictureTool
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"处理文件 \"{Path.GetFileName(file)}\" 时出错: {ex.Message}");
+                    Console.WriteLine($"[WARNNING] 处理文件 \"{Path.GetFileName(file)}\" 时出错: {ex.Message}");
                     failure++;
                 }
 
