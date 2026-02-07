@@ -1,9 +1,6 @@
 arc_unpack.py：解包
 arc_pack.py：封包
-UnityFS.py：处理封包内的UnityFS容器文本
-UnityFS_pic_v2.py：处理后缀为.bytes的UnityFS图片容器，特征为图片在TextAsset内，为TextAsset类型
-UnityFS_extract.py：无后缀类型的UnityFS容器提取，注意为半成品，目前字体不能正常提取
-其他不用管
+UnityFS.py：处理封包内的UnityFS文件
 
 Unity工具：
 #UnityHub以及Unity各版本编辑器下载
