@@ -3,20 +3,20 @@ import argparse
 import UnityPy
 from UnityPy.streams import EndianBinaryWriter
 
-# Unity 6 暴力提取与回封
-
 def ensure_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
 def unpack_recursive(input_dir, output_dir):
-    print(f"开始递归解包...")
+    print("开始递归解包...")
     total_files = 0
     total_extracted = 0
 
     for root, _, files in os.walk(input_dir):
         for filename in files:
-            if not filename.endswith(".bytes"): continue
+            # 兼容 assetbundle 无后缀或 .bytes 后缀的文件
+            if not (filename.endswith(".bytes") or "assetbundle" in filename.lower()):
+                continue
             
             file_path = os.path.join(root, filename)
             rel_path = os.path.relpath(root, input_dir)
@@ -31,11 +31,11 @@ def unpack_recursive(input_dir, output_dir):
                 obj_idx = 0
                 
                 for obj in env.objects:
-                    # 识别 TextAsset 或 Texture2D 对象
+                    # 仅处理 TextAsset 和 Texture2D 类型的对象
                     if obj.type.name in ["TextAsset", "Texture2D"]:
                         raw_data = obj.get_raw_data()
                         
-                        # 搜索 PNG 签名
+                        # 暴力搜索 PNG 指纹 (89 50 4E 47 ...)
                         png_header = b'\x89PNG\r\n\x1a\n'
                         start_pos = raw_data.find(png_header)
                         
@@ -44,6 +44,7 @@ def unpack_recursive(input_dir, output_dir):
                             if end_pos != -1:
                                 actual_png = raw_data[start_pos : end_pos + 8]
                                 
+                                # 命名规则：文件名.png 或 文件名_序号.png
                                 save_name = f"{base_name}.png" if obj_idx == 0 else f"{base_name}_{obj_idx}.png"
                                 with open(os.path.join(target_dir, save_name), "wb") as f:
                                     f.write(actual_png)
@@ -52,25 +53,27 @@ def unpack_recursive(input_dir, output_dir):
                                 total_extracted += 1
                                 obj_idx += 1
             except Exception as e:
-                print(f"[ERROR] 跳过 {filename}: {e}")
+                print(f"[错误] 跳过 {filename}: {e}")
 
-    print(f"\n解包完成！")
-    print(f"统计: 处理了 {total_files} 个容器文件，成功提取出 {total_extracted} 张图片。")
+    print("\n解包任务完成")
+    print(f"统计汇总: 扫描文件数: {total_files}, 提取图片数: {total_extracted}")
 
 def repack_recursive(input_dir, modded_dir, output_dir, use_compression=False):
-    print(f"开始递归回封...")
+    print("开始递归回封...")
     total_repacked = 0
     total_modified_objs = 0
 
     for root, _, files in os.walk(input_dir):
         for filename in files:
-            if not filename.endswith(".bytes"): continue
+            if not (filename.endswith(".bytes") or "assetbundle" in filename.lower()):
+                continue
             
             file_path = os.path.join(root, filename)
             rel_path = os.path.relpath(root, input_dir)
             mod_data_dir = os.path.join(modded_dir, rel_path)
             
-            if not os.path.exists(mod_data_dir): continue
+            if not os.path.exists(mod_data_dir):
+                continue
 
             try:
                 env = UnityPy.load(file_path)
@@ -80,6 +83,7 @@ def repack_recursive(input_dir, modded_dir, output_dir, use_compression=False):
                 obj_idx = 0
                 for obj in env.objects:
                     if obj.type.name in ["TextAsset", "Texture2D"]:
+                        # 对应解包时的命名规则匹配文件
                         img_name = f"{base_name}.png" if obj_idx == 0 else f"{base_name}_{obj_idx}.png"
                         img_path = os.path.join(mod_data_dir, img_name)
                         
@@ -87,23 +91,26 @@ def repack_recursive(input_dir, modded_dir, output_dir, use_compression=False):
                             with open(img_path, "rb") as f:
                                 new_png_data = f.read()
                             
-                            # 手动构建二进制块，确保符合 Unity 序列化对齐要求
+                            # 手动重构 TextAsset 的二进制布局
+                            # 布局: [Name Length][Name][Alignment][Data Length][Data][Alignment]
                             writer = EndianBinaryWriter()
-                            # 写入资源名
-                            writer.write_string_to_unicode(base_name)
-                            # 4字节对齐
-                            writer.align_stream(4)
-                            # 写入图片长度
-                            writer.write_int(len(new_png_data))
-                            # 写入图片数据
-                            writer.write_bytes(new_png_data)
-                            # 结尾对齐
+                            
+                            # 1. 写入资源名
+                            name_bytes = base_name.encode('utf-8')
+                            writer.write_int(len(name_bytes))
+                            writer.write_bytes(name_bytes)
                             writer.align_stream(4)
                             
+                            # 2. 写入数据流
+                            writer.write_int(len(new_png_data))
+                            writer.write_bytes(new_png_data)
+                            writer.align_stream(4)
+                            
+                            # 覆盖原始对象数据
                             obj.set_raw_data(writer.bytes)
                             modified = True
                             total_modified_objs += 1
-                            print(f"[MOD] {filename} <- {img_name}")
+                            print(f"[Replace] {filename} <- {img_name}")
                             obj_idx += 1
 
                 if modified:
@@ -112,28 +119,31 @@ def repack_recursive(input_dir, modded_dir, output_dir, use_compression=False):
                     target_path = os.path.join(target_root, filename)
                     
                     with open(target_path, "wb") as f:
+                        # 对于 Unity 6，使用 lz4 压缩
                         packer = "lz4" if use_compression else None
                         f.write(env.file.save(packer=packer))
                     total_repacked += 1
             except Exception as e:
                 print(f"[ERROR] 回封 {filename} 失败: {e}")
 
-    print(f"\n任务结束！")
-    print(f"统计: 修改并生成了 {total_repacked} 个封包，共替换图片 {total_modified_objs} 处。")
+    print("\n回封任务完成")
+    print(f"统计汇总: 生成封包数: {total_repacked}, 替换资源总数: {total_modified_objs}")
 
 def main():
-    parser = argparse.ArgumentParser(description="UnityFS图片批处理工具")
+    parser = argparse.ArgumentParser(description="UnityFS 图片资源批处理工具")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # 解包参数
     up = subparsers.add_parser("unpack")
-    up.add_argument("-i", "--input", default="pic")
-    up.add_argument("-o", "--output", default="pic_Extracted")
+    up.add_argument("-i", "--input", default="pic", help="包含 .bytes 的源文件夹")
+    up.add_argument("-o", "--output", default="pic_Extracted", help="导出图片的文件夹")
 
+    # 回封参数
     re = subparsers.add_parser("repack")
-    re.add_argument("-i", "--input", default="pic")
-    re.add_argument("-m", "--modded", default="pic_Extracted")
-    re.add_argument("-o", "--output", default="pic_Repack")
-    re.add_argument("-c", "--compress", action="store_true")
+    re.add_argument("-i", "--input", default="pic", help="包含原始 .bytes 的文件夹")
+    re.add_argument("-m", "--modded", default="pic_Extracted", help="存放已修改图片的文件夹")
+    re.add_argument("-o", "--output", default="pic_Repack", help="生成新封包的文件夹")
+    re.add_argument("-c", "--compress", action="store_true", help="启用 LZ4 压缩")
 
     args = parser.parse_args()
 

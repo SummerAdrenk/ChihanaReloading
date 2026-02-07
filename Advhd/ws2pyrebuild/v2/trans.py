@@ -134,7 +134,7 @@ def batch_trans(oriPath, transPath, outPath, namedict_path):
             import traceback
             traceback.print_exc()
             
-    print(f"\n所有步骤已完成，共处理 {count} 个文件。")
+    print(f"\n所有步骤已完成，共处理 {count} 个文件，请注意非文本文件的补齐...")
 
 def get_arg(value_from_args, prompt_text, default_val):
     if value_from_args is not None:
