@@ -1,0 +1,38 @@
+先讲一下这些py干嘛用的：
+分割json.py：拆分sceneData.json，并按照段落名将其分割为多个小json文件
+查询更新文件.py：将拆分出来的json文件夹与历史文件夹进行比较，查询出更新的json文件
+dump_name_table.py：提取出更新文件夹的人名并生成包含出现次数的csv人名表
+CSV文件.py：它会比对新生成的人名表与旧人名表，并更新旧人名表
+合并脚本.py：顾名思义，组合sceneData.json
+================================================================
+然后请你大致了解以上py，然后忘了它们，运行main.py并按照顺序【0-6】操作：
+###【各类文件与文件夹解说】
+sceneData.json：最新日文
+FLOWER KNIGHT GIRL【2025.10.16】：最新分割文本文件夹
+*scr/OldVersion：存放历届日文分割文本文件夹
+*scr/OldVersionTrans：存放历届译文分割文本文件夹
+FLOWER KNIGHT GIRL UPDATA【2025.10.16】：最新更新的日文分割文本文件夹->后续会作为历届更新的日文分割文本文件夹存入scr/OldVersion
+FLOWER KNIGHT GIRL UPDATA_TRANS【2025.10.16】：最新更新的译文分割文本文件夹->后续会作为历届更新的译文分割文本文件夹存入scr/OldVersionTrans，这个文件夹也是每次比较的文件夹
+*scr/NameTable：存放历届人名表的文件夹
+*scr/NameTableDict：存放历届字典的文件夹
+人名替换表updata.csv：更新的人名替换表
+人名替换表【2025.10.18】new.csv：新增人名替换表
+人名替换表updata.csv：合并了已有人名翻译的人名替换表
+人名替换表updata_trans.csv：读取人名替换表【2025.10.18】new.csv与项目GPT字典.txt补全人名替换表updata.csv后的最终更新人名表->后续会作为历届人名表存入scr/NameTable
+*scr/sceneData：存放历届译文的文件夹
+sceneData【2025.10.16】.json：最新译文->后续会作为历届译文复制一份存入scr/sceneData
+sceneData【2025.10.16】.js：添加表头后的成品文件
+================================================================
+###【流程】
+1、将包中的sceneData.js放置于工程文件夹
+2、运行main_v2.py后按照顺序运行，记得在追加字典的时候会加一行更新信息，记得删除
+3、用SE提取即可，换行符删除
+================================================================
+然后对FLOWER KNIGHT GIRL UPDATA文件夹进行提取：
+RPGMV UTF-8
+00_skip=^<[^>]+?>$
+01_skip=^<.+?><(?!NAME)
+02_search=^<.+?><NAME_PLATE>(?P<name>.+)$
+03_skip=^<.+?><
+04_search=^<.+?>(.+)$
+extractKey=SCRIPT
