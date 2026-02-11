@@ -29,6 +29,7 @@ class ArcEntry:
         self.name = ""
         self.size = 0
         self.offset = 0
+        self.path = ""
 
 class ArcManager:
     @staticmethod

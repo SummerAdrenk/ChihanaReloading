@@ -87,7 +87,7 @@ def batch_dump(oriPath, outPath):
         out.save_json(os.path.join(outPath, file + ".json"))
         info.update(out)
 
-    info.output(1)
+    info.output(True)
 
     # 生成警告报告
     print("\n" + "="*50)
