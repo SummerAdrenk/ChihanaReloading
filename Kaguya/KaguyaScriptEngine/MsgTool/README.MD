@@ -2,7 +2,7 @@
 
 > 原作者：crskycode  
 > 原项目地址：https://github.com/crskycode/Kaguya_Tool
-> 现项目地址：
+> 现项目地址：https://github.com/SummerAdrenk/ChihanaReloading/tree/main/Kaguya/KaguyaScriptEngine/MsgTool
 > 版本: 1.5.0
 > 功能: 导出/导入 KaguyaScriptEngine（アトリエかぐや BARE＆BUNNY&アトリエかぐや Honky-Tonk Pumpkin）的 message.dat 【[SCR-MESSAGE]ver4.0版本】脚本文件，用于机翻。
 ----------------------------------------------------------------------
