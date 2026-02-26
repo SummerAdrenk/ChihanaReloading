@@ -1,9 +1,9 @@
 # KaguyaMsgTool使用说明	——by ChihanaSonnetia
 
 > 原作者：crskycode  
-> 原项目地址：https://github.com/crskycode/Kaguya_Tool
-> 现项目地址：https://github.com/SummerAdrenk/ChihanaReloading/tree/main/Kaguya/KaguyaScriptEngine/MsgTool
-> 版本: 1.5.0
+> 原项目地址：https://github.com/crskycode/Kaguya_Tool  
+> 现项目地址：https://github.com/SummerAdrenk/ChihanaReloading/tree/main/Kaguya/KaguyaScriptEngine/MsgTool  
+> 版本: 1.5.0  
 > 功能: 导出/导入 KaguyaScriptEngine（アトリエかぐや BARE＆BUNNY&アトリエかぐや Honky-Tonk Pumpkin）的 message.dat 【[SCR-MESSAGE]ver4.0版本】脚本文件，用于机翻。
 ----------------------------------------------------------------------
 ## ■ 1、功能简介
@@ -70,9 +70,9 @@
 >
 > - 【占位符显示长度】:  
   形如 "[FirstName]_Len = 2" 的设置。  
-  这用于处理游戏中的自定义人名等的显示长度，用于后续的长度检测与修正
-  例如自定义名为李明，则长度为2字符，设置里就填写2。
-  如果没有设置对应的长度，程序则会默认设置为3字符。
+  这用于处理游戏中的自定义人名等的显示长度，用于后续的长度检测与修正  
+  例如自定义名为李明，则长度为2字符，设置里就填写2。  
+  如果没有设置对应的长度，程序则会默认设置为3字符。  
 >
 > - 【加密配置[XOR]】: 简单的XOR加密  
 > "EncryptEnabled= True":   
@@ -208,7 +208,7 @@
 <br>  
 
 ## ■ 6、测试项目
-> [アトリエかぐや BARE＆BUNNY]全社 | 截止到 Hakoniwa -ハコニワ- 
+> [アトリエかぐや BARE＆BUNNY]全社 | 截止到 Hakoniwa -ハコニワ-  
 > [アトリエかぐや Honky-Tonk Pumpkin]イチャ姉！
 
 **【该工具尚未进行全面的测试，特别是config配置，为实验内容，仅在个别案例上测试过，请谨慎使用本工具】**
