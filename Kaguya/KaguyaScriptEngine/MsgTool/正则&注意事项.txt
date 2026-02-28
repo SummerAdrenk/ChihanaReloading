@@ -1,8 +1,0 @@
-#正则：
-01_search=◆C.+◆name◆(?P<name>.+)
-02_search=◆C.+◆msg◆branch0.+◆(.+)\\n$
-03_search=◆C.+◆msg◆(.+)\\n$
-04_search=◆.+◆(.+)
-
-#注意事项：
-自己读config.ini跟README.MD
