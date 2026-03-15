@@ -1,0 +1,34 @@
+\ Baka Moe Heart ni Ai wo Komete!
+\ Cocoro@Function!
+\ Hoka no Onna no Ko to H wo Shiteiru Ore wo Mite Koufun Suru Kanojo
+\ Kono Oozora ni, Tsubasa wo Hirogete
+\ Kono Oozora ni, Tsubasa wo Hirogete FLIGHT DIARY
+\ Ojou-sama wa Gokigen Naname
+\ Omae no Onna o Netotteyaru ~Mukashi Yatta Onna wa Ima wa Hakui no Tenshi. Danna no Mae de Kokoro mo Shintai mo Moteasonde Netoru~
+\ Yobai Suru Shichinin no Harame
+
+: Will Co. Engine v2 :
+
+- archives
+arc -- full -- основной формат архивов. Все основные скрипты как правило содержатся в файле "Rio.arc".
+
+- images
+png -- std  -- содержит изображения включая системную графику.
+mos -- std  -- переименованные PNG файлы. Идут в паре с хентайными CG. Содержат маски для зацензуривания
+               изображений для использования в галерее, где мозаика неэффективна ввиду сильного даунскейла.
+
+- scripts
+ws2 -- no   -- байт-кодовый скрипт, пошифрован циклическим сдвигом влево на 4 бита.
+
+- sound
+ogg -- std  -- *
+
+- other
+fx  -- no   -- файлы содержащие визуальные эффекты. (Возможно скомпилированные шейдеры?)
+txt -- std  -- файл идет в комплекте с некоторыми изображениями.
+               Содержит информацию нужную для воспроизведения анимации. Имеет окончание "+layers" в имени файла.
+dat -- std  -- содержит видео со звуковой дорожкой. Возможные варианты:
+               Контейнер: Windows Media Видео: VC-1 MP@HL Аудио: WMA Pro
+               Контейнер: MPEG-PS       Видео: MPEG1      Аудио: mp2
+lua -- no   -- скомпилированные lua скрипты
+pna -- no   -- неизвестный формат. Судя по всему скрипты, отвечающие за какую-то анимацию системных меню.

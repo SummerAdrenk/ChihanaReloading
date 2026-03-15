@@ -1,0 +1,15 @@
+\ Usamimi Deliveries!!
+
+: Studio Miris v1a :
+
+- archives
+arc -- full -- Ничего необычного
+
+- images
+zgf -- no -- каждый цветоканал хранится в отдельном zlib-контейнере
+
+- scripts
+snr -- no -- неизвестное шифрование
+
+- sound
+ogg -- std -- *
