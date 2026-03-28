@@ -1,0 +1,47 @@
+# 适用于Ver494
+# 提取文本:
+python #1_GuessXorKey.py xxx.ybn
+python #2_XOR.py dec
+python #3_YSTBTool_v494.py decompile "ysbin_dec" "ysbin_dec_dump"
+python #4_texttwolines_v494.py export-ystb "ysbin_dec_dump" "ysbin_dec_dump_txt"
+python #5_rubyclean_v494.py "ysbin_dec_dump_txt" "ysbin_dec_dump_txt_clean"
+
+// あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-
+人名文件为yst00087
+文本从yst00134开始
+窗口文件是yst00039、yst00107:
+確認:8A6D9446
+确认:C8B7C8CF
+ゲームを終了します。よろしいですか？:8351815B838082F08F4997B982B582DC82B7814282E682EB82B582A282C582B782A98148
+即将结束游戏。确定吗？:BCB4BDABBDE1CAF8D3CECFB7A1A3C8B7B6A8C2F0A3BF2020202020202020202020202020
+
+##SE提取双行文本:
+01_search=^◆.+◆name◆(?P<name>.+)
+02_search=^◆.+◆msg◆(.+)
+03_search=^◆.+◆sel◆(.+)
+
+# 翻译结束后:
+处理一些非GBK字符:
+♪->傿
+⊂->傾
+后续通过字体映射即可
+
+//然后扔回ysbin_dec找到存储人名的那个ybn文件进行以下操作:
+//「: 8175->A1B8
+//『: 8177->A1BA
+//（: 8169->A3A8
+
+python #4_texttwolines_v494.py apply-ystb "ysbin_dec_dump" "ysbin_dec_dump_txt_clean_trans" "ysbin_dec_dump_trans"
+python #3_YSTBTool_v494.py compile "ysbin_dec" "ysbin_dec_dump_trans" "ysbin_dec_new" --source-encoding cp932 --text-encoding gbk --encoding-errors strict
+python #2_XOR.py enc
+# 后续处理:
+- 使用 Replace_RangTable.exe 处理游戏 exe
+- 掏一个yscfg.ybn打开:
+从后往前数:
+4*4字节 4字节标题长度 标题
+将这前三个四字节改成01 00 00 00
+- 使用dbg调试exe:
+进入后直接跨模块搜索GetFileAttributesA，找到逻辑比较简单的那个
+在函数入口处Ctrl+R，在搜到的一系列引用中，找到调用yscfg.ybn的那个，建议从后往前找
+然后将两个数组的第一个值改成3
+- 编写dllhook程序，将游戏的Charset改成0x86，同时使用vfs取代免封包(保持目录结构)
