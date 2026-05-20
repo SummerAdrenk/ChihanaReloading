@@ -1,0 +1,816 @@
+// ============================================================================
+// SpViewerWindow.cs
+// SP 立绘查看器主窗口 (code-only Avalonia, 无 XAML)
+//
+// 布局:
+//   左侧面板 (ScrollViewer):
+//     角色列表 / 差分列表 (固定)
+//     Overlay (可折叠, 默认收起)
+//     Background (可折叠, 默认展开)
+//     Custom BG (可折叠, 用户选择文件夹, 按宽高比过滤, 路径持久化)
+//   中央: 预览画布 (缩放自适应)
+//   底部: 导出按钮 + 进度条
+// ============================================================================
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
+using Kaguya_YaneKit.Formats.Character;
+using Kaguya_YaneKit.Formats.Params;
+using AvBitmap = Avalonia.Media.Imaging.Bitmap;
+using SysBitmap = System.Drawing.Bitmap;
+using SysColor = System.Drawing.Color;
+
+namespace Kaguya_YaneKit.Gui;
+
+internal sealed class SpViewerWindow : Window
+{
+    private readonly string _picDir;
+    private readonly ParamsDatDocument? _params;
+    private readonly int _canvasWidth;
+    private readonly int _canvasHeight;
+
+    private readonly ListBox _characterList;
+    private readonly ListBox _expressionList;
+    private readonly ListBox _overlayList;
+    private readonly ListBox _backgroundList;
+    private readonly ListBox _customBgList;
+    private readonly Button _customBgBrowseBtn;
+    private readonly TextBlock _customBgPathText;
+    private readonly Avalonia.Controls.Image _previewImage;
+    private readonly TextBlock _statusText;
+    private readonly ProgressBar _progressBar;
+    private readonly Button _exportCurrentBtn;
+    private readonly Button _exportAllBtn;
+
+    private List<SpCharacterGroup> _characters = new();
+    private List<SpExpressionEntry> _overlays = new();
+    private List<SpBackgroundEntry> _backgrounds = new();
+    private List<SpBackgroundEntry> _customBgs = new();
+    private bool _isExporting;
+    private bool _suppressBgSync;
+
+    private string ConfigPath => Path.Combine(_picDir, "..", "sp_viewer_config.json");
+
+    public SpViewerWindow(string picDir, ParamsDatDocument? paramsDocument, int canvasWidth, int canvasHeight)
+    {
+        _picDir = Path.GetFullPath(picDir);
+        _params = paramsDocument;
+        _canvasWidth = canvasWidth;
+        _canvasHeight = canvasHeight;
+
+        Title = "SP Viewer";
+        Width = 1100;
+        Height = 750;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+
+        var borderBrush = new SolidColorBrush(Avalonia.Media.Color.FromRgb(80, 80, 80));
+
+        _characterList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 150 };
+        _expressionList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 200 };
+        _overlayList = new ListBox
+        {
+            SelectionMode = SelectionMode.Multiple | SelectionMode.Toggle,
+            BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 160
+        };
+        _backgroundList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 160 };
+        _customBgList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 160 };
+        _customBgBrowseBtn = new Button { Content = "Browse...", Margin = new Thickness(0, 2, 4, 2), Padding = new Thickness(8, 2) };
+        _customBgPathText = new TextBlock
+        {
+            Text = "(no folder)",
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0.6,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 170
+        };
+        _previewImage = new Avalonia.Controls.Image
+        {
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _statusText = new TextBlock
+        {
+            Text = "Loading...",
+            Margin = new Thickness(8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _progressBar = new ProgressBar
+        {
+            Minimum = 0, Maximum = 100, Height = 18,
+            IsIndeterminate = true, IsVisible = true,
+            Margin = new Thickness(8, 0)
+        };
+        _exportCurrentBtn = new Button { Content = "Export Current", Margin = new Thickness(4, 0), IsEnabled = false };
+        _exportAllBtn = new Button { Content = "Export All (Current Character)", Margin = new Thickness(4, 0), IsEnabled = false };
+
+        Content = BuildLayout();
+
+        _characterList.SelectionChanged += (_, _) => OnCharacterChanged();
+        _expressionList.SelectionChanged += (_, _) => OnSelectionChanged();
+        _overlayList.SelectionChanged += (_, _) => OnSelectionChanged();
+        _backgroundList.SelectionChanged += (_, _) => OnBuiltinBgChanged();
+        _customBgList.SelectionChanged += (_, _) => OnCustomBgChanged();
+        _customBgBrowseBtn.Click += (_, _) => BrowseCustomBgFolder();
+        _exportCurrentBtn.Click += (_, _) => ExportCurrent();
+        _exportAllBtn.Click += (_, _) => ExportAll();
+
+        Opened += (_, _) => Dispatcher.UIThread.Post(LoadData, DispatcherPriority.Background);
+    }
+
+    // ─── Collapsible section builder ─────────────────────────────────
+
+    private static Control BuildCollapsibleSection(string label, Control content, bool startExpanded)
+    {
+        var arrow = new TextBlock
+        {
+            Text = startExpanded ? "▼ " : "▶ ",
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 6, 0, 2)
+        };
+        var title = new TextBlock
+        {
+            Text = label,
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 6, 0, 2)
+        };
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Children = { arrow, title },
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        content.IsVisible = startExpanded;
+
+        header.PointerPressed += (_, _) =>
+        {
+            content.IsVisible = !content.IsVisible;
+            arrow.Text = content.IsVisible ? "▼ " : "▶ ";
+        };
+
+        return new StackPanel { Children = { header, content } };
+    }
+
+    // ─── Layout ──────────────────────────────────────────────────────
+
+    private Control BuildLayout()
+    {
+        var customBgToolbar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 2),
+            Children = { _customBgBrowseBtn, _customBgPathText }
+        };
+        var customBgContent = new StackPanel { Children = { customBgToolbar, _customBgList } };
+
+        var leftPanel = new StackPanel
+        {
+            Margin = new Thickness(8),
+            Children =
+            {
+                BuildCollapsibleSection("Character", _characterList, true),
+                BuildCollapsibleSection("Variant", _expressionList, true),
+                BuildCollapsibleSection("Overlay", _overlayList, false),
+                BuildCollapsibleSection("Background", _backgroundList, true),
+                BuildCollapsibleSection("Custom BG", customBgContent, false)
+            }
+        };
+
+        var leftScroll = new ScrollViewer
+        {
+            Width = 270,
+            Content = leftPanel,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+
+        var sep1 = new TextBlock { Text = "|", Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Opacity = 0.5 };
+        var sep2 = new TextBlock { Text = "|", Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Opacity = 0.5 };
+        var bottomBar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(8, 4),
+            Children = { _exportCurrentBtn, sep1, _exportAllBtn, sep2, _statusText }
+        };
+        var progressRow = new DockPanel
+        {
+            Margin = new Thickness(8, 2),
+            LastChildFill = true,
+            Children = { _progressBar }
+        };
+        var previewBorder = new Border
+        {
+            Background = new SolidColorBrush(Avalonia.Media.Color.FromRgb(32, 32, 32)),
+            Margin = new Thickness(4),
+            Child = _previewImage
+        };
+
+        var rightPanel = new DockPanel();
+        DockPanel.SetDock(progressRow, Dock.Bottom);
+        DockPanel.SetDock(bottomBar, Dock.Bottom);
+        rightPanel.Children.Add(progressRow);
+        rightPanel.Children.Add(bottomBar);
+        rightPanel.Children.Add(previewBorder);
+
+        var mainGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        Grid.SetColumn(leftScroll, 0);
+        Grid.SetColumn(rightPanel, 1);
+        mainGrid.Children.Add(leftScroll);
+        mainGrid.Children.Add(rightPanel);
+
+        return mainGrid;
+    }
+
+    // ─── Data loading ────────────────────────────────────────────────
+
+    private void LoadData()
+    {
+        _statusText.Text = "Building asset index...";
+        _progressBar.IsIndeterminate = true;
+        _progressBar.IsVisible = true;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                Dispatcher.UIThread.Post(() => _statusText.Text = "Scanning static assets...");
+                var staticAssets = CharacterComposer.BuildStaticAssetIndex(_picDir);
+
+                Dispatcher.UIThread.Post(() => _statusText.Text = "Scanning animated assets...");
+                var animatedAssets = CharacterComposer.BuildAnimatedAssetIndex(_picDir);
+
+                var characters = new List<SpCharacterGroup>();
+                var overlays = new List<SpExpressionEntry>();
+
+                Dispatcher.UIThread.Post(() => _statusText.Text = "Scanning backgrounds...");
+                var backgrounds = BuildBackgroundList();
+
+                if (_params?.Pattern is not null)
+                {
+                    Dispatcher.UIThread.Post(() => _statusText.Text = "Building SP plans...");
+                    var usedStatic = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var usedAnimated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var result = new CharacterComposeResult();
+
+                    var plans = CharacterComposer.BuildSpPlans(
+                        _params.Pattern, staticAssets, animatedAssets,
+                        usedStatic, usedAnimated, result).ToArray();
+
+                    (characters, overlays) = GroupPlansByCharacter(plans);
+                }
+
+                var savedCustomBgFolder = LoadCustomBgFolder();
+                var customBgs = new List<SpBackgroundEntry>();
+                if (savedCustomBgFolder is not null && Directory.Exists(savedCustomBgFolder))
+                {
+                    customBgs = ScanCustomBgFolder(savedCustomBgFolder);
+                }
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _characters = characters;
+                    _overlays = overlays;
+                    _backgrounds = backgrounds;
+                    _customBgs = customBgs;
+
+                    _characterList.ItemsSource = _characters;
+                    _overlayList.ItemsSource = _overlays;
+                    _backgroundList.ItemsSource = _backgrounds;
+                    _customBgList.ItemsSource = _customBgs;
+
+                    if (savedCustomBgFolder is not null)
+                        _customBgPathText.Text = savedCustomBgFolder;
+
+                    if (_characters.Count > 0)
+                        _characterList.SelectedIndex = 0;
+                    if (_backgrounds.Count > 0)
+                        _backgroundList.SelectedIndex = 0;
+
+                    _progressBar.IsIndeterminate = false;
+                    _progressBar.IsVisible = false;
+                    _exportCurrentBtn.IsEnabled = true;
+                    _exportAllBtn.IsEnabled = true;
+
+                    var totalExpr = _characters.Sum(c => c.Expressions.Count);
+                    _statusText.Text = $"Loaded {_characters.Count} characters ({totalExpr} variants), {_overlays.Count} overlays, {_backgrounds.Count} backgrounds, {_customBgs.Count} custom BG";
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _progressBar.IsIndeterminate = false;
+                    _progressBar.IsVisible = false;
+                    _statusText.Text = $"Error: {ex.Message}";
+                });
+            }
+        });
+    }
+
+    // ─── Selection handlers ──────────────────────────────────────────
+
+    private void OnCharacterChanged()
+    {
+        if (_characterList.SelectedItem is not SpCharacterGroup group)
+        {
+            _expressionList.ItemsSource = null;
+            return;
+        }
+
+        _expressionList.ItemsSource = group.Expressions;
+        if (group.Expressions.Count > 0)
+            _expressionList.SelectedIndex = 0;
+    }
+
+    private void OnBuiltinBgChanged()
+    {
+        if (_suppressBgSync) return;
+        if (_backgroundList.SelectedItem is SpBackgroundEntry)
+        {
+            _suppressBgSync = true;
+            _customBgList.SelectedIndex = -1;
+            _suppressBgSync = false;
+        }
+        OnSelectionChanged();
+    }
+
+    private void OnCustomBgChanged()
+    {
+        if (_suppressBgSync) return;
+        if (_customBgList.SelectedItem is SpBackgroundEntry)
+        {
+            _suppressBgSync = true;
+            _backgroundList.SelectedIndex = -1;
+            _suppressBgSync = false;
+        }
+        OnSelectionChanged();
+    }
+
+    private SpBackgroundEntry? GetSelectedBackground()
+    {
+        if (_customBgList.SelectedItem is SpBackgroundEntry custom && !string.IsNullOrEmpty(custom.PngPath))
+            return custom;
+        return _backgroundList.SelectedItem as SpBackgroundEntry;
+    }
+
+    private void OnSelectionChanged()
+    {
+        if (_isExporting) return;
+
+        var expression = _expressionList.SelectedItem as SpExpressionEntry;
+        var background = GetSelectedBackground();
+        var selectedOverlays = _overlayList.SelectedItems?.Cast<SpExpressionEntry>().ToList()
+                               ?? new List<SpExpressionEntry>();
+
+        if (expression is null)
+        {
+            _previewImage.Source = null;
+            return;
+        }
+
+        _statusText.Text = "Composing preview...";
+        Task.Run(() =>
+        {
+            try
+            {
+                var bitmap = ComposePreview(expression, background, selectedOverlays);
+                var avBitmap = ConvertToAvalonia(bitmap);
+                bitmap.Dispose();
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _previewImage.Source = avBitmap;
+                    if (!_isExporting)
+                        _statusText.Text = $"{expression} | {_canvasWidth}x{_canvasHeight}";
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() => _statusText.Text = $"Compose error: {ex.Message}");
+            }
+        });
+    }
+
+    // ─── Compose ─────────────────────────────────────────────────────
+
+    private SysBitmap ComposePreview(SpExpressionEntry expression, SpBackgroundEntry? background, IReadOnlyList<SpExpressionEntry>? overlays = null)
+    {
+        var canvas = new SysBitmap(_canvasWidth, _canvasHeight, PixelFormat.Format32bppArgb);
+        using (var graphics = Graphics.FromImage(canvas))
+        {
+            graphics.Clear(SysColor.Transparent);
+
+            if (background is not null && !string.IsNullOrEmpty(background.PngPath) && File.Exists(background.PngPath))
+            {
+                using var bgImage = new SysBitmap(background.PngPath);
+                if (bgImage.Width >= _canvasWidth && bgImage.Height >= _canvasHeight
+                    && Math.Abs((double)bgImage.Width / bgImage.Height - (double)_canvasWidth / _canvasHeight) > 0.02)
+                {
+                    var srcX = (bgImage.Width - _canvasWidth) / 2;
+                    var srcY = (bgImage.Height - _canvasHeight) / 2;
+                    graphics.DrawImage(bgImage,
+                        new Rectangle(0, 0, _canvasWidth, _canvasHeight),
+                        new Rectangle(srcX, srcY, _canvasWidth, _canvasHeight),
+                        GraphicsUnit.Pixel);
+                }
+                else
+                {
+                    graphics.DrawImage(bgImage, 0, 0, _canvasWidth, _canvasHeight);
+                }
+            }
+
+            foreach (var layer in expression.Layers)
+            {
+                var imagePath = layer.GetFramePath(0);
+                using var image = new SysBitmap(imagePath);
+                graphics.DrawImage(image, layer.OffsetX, layer.OffsetY, image.Width, image.Height);
+            }
+
+            if (overlays is not null)
+            {
+                foreach (var overlay in overlays)
+                {
+                    foreach (var layer in overlay.Layers)
+                    {
+                        var imagePath = layer.GetFramePath(0);
+                        using var image = new SysBitmap(imagePath);
+                        graphics.DrawImage(image, layer.OffsetX, layer.OffsetY, image.Width, image.Height);
+                    }
+                }
+            }
+        }
+
+        return canvas;
+    }
+
+    private static AvBitmap ConvertToAvalonia(SysBitmap bitmap)
+    {
+        using var ms = new MemoryStream();
+        bitmap.Save(ms, ImageFormat.Png);
+        ms.Position = 0;
+        return new AvBitmap(ms);
+    }
+
+    // ─── Export ──────────────────────────────────────────────────────
+
+    private void SetExporting(bool exporting)
+    {
+        _isExporting = exporting;
+        _exportCurrentBtn.IsEnabled = !exporting;
+        _exportAllBtn.IsEnabled = !exporting;
+        _characterList.IsEnabled = !exporting;
+        _expressionList.IsEnabled = !exporting;
+        _overlayList.IsEnabled = !exporting;
+        _backgroundList.IsEnabled = !exporting;
+        _customBgList.IsEnabled = !exporting;
+    }
+
+    private void ExportCurrent()
+    {
+        var expression = _expressionList.SelectedItem as SpExpressionEntry;
+        var background = GetSelectedBackground();
+        var character = _characterList.SelectedItem as SpCharacterGroup;
+        var selectedOverlays = _overlayList.SelectedItems?.Cast<SpExpressionEntry>().ToList();
+
+        if (expression is null || character is null)
+        {
+            _statusText.Text = "No expression selected.";
+            return;
+        }
+
+        SetExporting(true);
+        _progressBar.IsIndeterminate = false;
+        _progressBar.IsVisible = true;
+        _progressBar.Maximum = 1;
+        _progressBar.Value = 0;
+        _statusText.Text = "Exporting...";
+
+        Task.Run(() =>
+        {
+            try
+            {
+                var exportDir = Path.Combine(_picDir, "..", "character", "sp_export");
+                Directory.CreateDirectory(exportDir);
+
+                var bgName = (background is null || string.IsNullOrEmpty(background.PngPath)) ? "nobg" : Path.GetFileNameWithoutExtension(background.Name);
+                var fileName = $"{character.Name}_{expression}_{bgName}.png";
+                var destPath = Path.Combine(exportDir, SanitizeFileName(fileName));
+
+                using var bitmap = ComposePreview(expression, background, selectedOverlays);
+                bitmap.Save(destPath, ImageFormat.Png);
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _progressBar.Value = 1;
+                    _progressBar.IsVisible = false;
+                    _statusText.Text = $"Exported: {Path.GetFileName(destPath)}";
+                    SetExporting(false);
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _progressBar.IsVisible = false;
+                    _statusText.Text = $"Export failed: {ex.Message}";
+                    SetExporting(false);
+                });
+            }
+        });
+    }
+
+    private void ExportAll()
+    {
+        var character = _characterList.SelectedItem as SpCharacterGroup;
+        var background = GetSelectedBackground();
+
+        if (character is null)
+        {
+            _statusText.Text = "No character selected.";
+            return;
+        }
+
+        var total = character.Expressions.Count;
+        if (total == 0)
+        {
+            _statusText.Text = "No expressions to export.";
+            return;
+        }
+
+        SetExporting(true);
+        _progressBar.IsIndeterminate = false;
+        _progressBar.IsVisible = true;
+        _progressBar.Maximum = total;
+        _progressBar.Value = 0;
+        _statusText.Text = $"Exporting {character.Name}: 0/{total}";
+
+        var capturedChar = character;
+        var capturedBg = background;
+        Task.Run(() =>
+        {
+            try
+            {
+                var bgName = (capturedBg is null || string.IsNullOrEmpty(capturedBg.PngPath)) ? "nobg" : Path.GetFileNameWithoutExtension(capturedBg.Name);
+                var exportDir = Path.Combine(_picDir, "..", "character", "sp_export", SanitizeFileName(capturedChar.Name));
+                Directory.CreateDirectory(exportDir);
+
+                for (var i = 0; i < total; i++)
+                {
+                    var expr = capturedChar.Expressions[i];
+                    var fileName = $"{expr}_{bgName}.png";
+                    var destPath = Path.Combine(exportDir, SanitizeFileName(fileName));
+
+                    using var bitmap = ComposePreview(expr, capturedBg);
+                    bitmap.Save(destPath, ImageFormat.Png);
+
+                    var progress = i + 1;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        _progressBar.Value = progress;
+                        _statusText.Text = $"Exporting {capturedChar.Name}: {progress}/{total} ({100 * progress / total}%)";
+                    });
+                }
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _progressBar.IsVisible = false;
+                    _statusText.Text = $"Exported {total} images -> sp_export/{capturedChar.Name}/";
+                    SetExporting(false);
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _progressBar.IsVisible = false;
+                    _statusText.Text = $"Export failed: {ex.Message}";
+                    SetExporting(false);
+                });
+            }
+        });
+    }
+
+    // ─── Background scanning ─────────────────────────────────────────
+
+    private List<SpBackgroundEntry> BuildBackgroundList()
+    {
+        var list = new List<SpBackgroundEntry> { SpBackgroundEntry.None };
+
+        var backgroundDirs = new[] { "bgd", "BG" }
+            .Select(name => Path.Combine(_picDir, name))
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var bgdDir in backgroundDirs)
+        {
+            foreach (var formatDir in Directory.GetDirectories(bgdDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            {
+                var pngDir = Path.Combine(formatDir, "png");
+                if (!Directory.Exists(pngDir))
+                    continue;
+
+                foreach (var png in Directory.GetFiles(pngDir, "*.png", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+                {
+                    var name = Path.GetFileNameWithoutExtension(png);
+                    if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("BG", StringComparison.OrdinalIgnoreCase))
+                    {
+                        list.Add(new SpBackgroundEntry(name, png));
+                        continue;
+                    }
+                    if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("ＢＧ"))
+                    {
+                        list.Add(new SpBackgroundEntry(name, png));
+                    }
+                }
+            }
+        }
+
+        return list;
+    }
+
+    // ─── Custom BG ───────────────────────────────────────────────────
+
+    private async void BrowseCustomBgFolder()
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Custom Background Folder",
+            AllowMultiple = false
+        });
+
+        if (folders.Count == 0) return;
+
+        var folderPath = folders[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath)) return;
+
+        _statusText.Text = "Scanning custom backgrounds...";
+        var path = folderPath;
+
+        await Task.Run(() =>
+        {
+            var items = ScanCustomBgFolder(path);
+            SaveCustomBgFolder(path);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                _customBgs = items;
+                _customBgList.ItemsSource = _customBgs;
+                _customBgPathText.Text = path;
+                _statusText.Text = $"Custom BG: {items.Count} images from {Path.GetFileName(path)}";
+            });
+        });
+    }
+
+    private List<SpBackgroundEntry> ScanCustomBgFolder(string folderPath)
+    {
+        var list = new List<SpBackgroundEntry>();
+        var extensions = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp" };
+        var targetRatio = (double)_canvasWidth / _canvasHeight;
+
+        foreach (var ext in extensions)
+        {
+            foreach (var file in Directory.GetFiles(folderPath, ext, SearchOption.TopDirectoryOnly)
+                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    using var img = new SysBitmap(file);
+                    var oversized = img.Width >= _canvasWidth && img.Height >= _canvasHeight;
+                    var ratioMatch = Math.Abs((double)img.Width / img.Height - targetRatio) < 0.02;
+                    if (oversized || ratioMatch)
+                    {
+                        list.Add(new SpBackgroundEntry(Path.GetFileNameWithoutExtension(file), file));
+                    }
+                }
+                catch
+                {
+                    // skip unreadable images
+                }
+            }
+        }
+
+        return list;
+    }
+
+    // ─── Config persistence ──────────────────────────────────────────
+
+    private string? LoadCustomBgFolder()
+    {
+        try
+        {
+            if (!File.Exists(ConfigPath)) return null;
+            var json = File.ReadAllText(ConfigPath);
+            var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("CustomBgFolder", out var prop))
+                return prop.GetString();
+        }
+        catch { /* ignore */ }
+        return null;
+    }
+
+    private void SaveCustomBgFolder(string folderPath)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(new { CustomBgFolder = folderPath },
+                new JsonSerializerOptions { WriteIndented = true });
+            Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
+            File.WriteAllText(ConfigPath, json);
+        }
+        catch { /* ignore */ }
+    }
+
+    // ─── Grouping ────────────────────────────────────────────────────
+
+    private static string BuildLabel(IEnumerable<string> parts)
+    {
+        var arr = parts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        return arr.Length == 0 ? "unknown" : string.Join("+", arr);
+    }
+
+    private static (List<SpCharacterGroup> Characters, List<SpExpressionEntry> Overlays) GroupPlansByCharacter(CharacterComposer.SpCompositionPlan[] plans)
+    {
+        var planEntries = plans.Select(p => (
+            Plan: p,
+            Entry: new SpExpressionEntry(p.Index, BuildLabel(p.LabelParts), p.Layers, p.RequiresFrames)
+        )).ToArray();
+
+        var rawPrefixes = new List<string>();
+        foreach (var (plan, _) in planEntries)
+        {
+            if (plan.Layers.Count < 2) continue;
+            var prefix = GetLongestCommonPrefix(plan.LabelParts);
+            if (prefix.Length > 0)
+                rawPrefixes.Add(prefix);
+        }
+
+        var sorted = rawPrefixes.Distinct().OrderBy(p => p.Length).ToList();
+        var characterNames = new List<string>();
+        foreach (var prefix in sorted)
+        {
+            if (!characterNames.Any(cn => prefix.StartsWith(cn)))
+                characterNames.Add(prefix);
+        }
+
+        var groups = new Dictionary<string, List<SpExpressionEntry>>();
+        var overlays = new List<SpExpressionEntry>();
+        foreach (var (plan, entry) in planEntries)
+        {
+            var label = plan.LabelParts.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
+            var charName = characterNames.FirstOrDefault(cn => label.StartsWith(cn));
+            if (charName is null)
+            {
+                overlays.Add(entry);
+            }
+            else
+            {
+                if (!groups.ContainsKey(charName))
+                    groups[charName] = new List<SpExpressionEntry>();
+                groups[charName].Add(entry);
+            }
+        }
+
+        var characters = groups
+            .Where(g => g.Value.Count > 0)
+            .OrderBy(g => g.Key)
+            .Select(g => new SpCharacterGroup(g.Key, g.Value.OrderBy(e => e.Index).ToList()))
+            .ToList();
+
+        return (characters, overlays.OrderBy(e => e.Index).ToList());
+    }
+
+    private static string GetLongestCommonPrefix(IReadOnlyList<string> parts)
+    {
+        var names = parts.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+        if (names.Length == 0) return "";
+        if (names.Length == 1) return names[0];
+
+        var prefix = names[0];
+        for (var i = 1; i < names.Length; i++)
+        {
+            var maxLen = Math.Min(prefix.Length, names[i].Length);
+            var commonLen = 0;
+            while (commonLen < maxLen && prefix[commonLen] == names[i][commonLen])
+                commonLen++;
+            prefix = prefix[..commonLen];
+            if (prefix.Length == 0) return "";
+        }
+
+        return prefix;
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        foreach (var c in Path.GetInvalidFileNameChars())
+            name = name.Replace(c, '_');
+        return name;
+    }
+}
