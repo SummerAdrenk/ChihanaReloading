@@ -7,7 +7,7 @@
 - [message.dat / MsgTool 逻辑](file/README_message_dat.md)
 - [全 opcode / VM / DemoData](file/README_op.md)
 - [scr disasm 可编辑文本 IR](scrasm.md)
-- [旧 MsgTool 说明归档](legacy/MsgTool_README.md)
+- [旧 MsgTool 说明归档<理论上看这个更好>](legacy/MsgTool_README.md)
 
 ## 封包
 

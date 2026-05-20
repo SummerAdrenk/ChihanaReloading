@@ -1,6 +1,6 @@
 # DLL 分析记录
 
-本文只记录 `Graphics.dll`、`RenderDX.dll`、`Sound.dll` 三个运行时模块，不把它们和 `.scr` / `params.dat` / `message.dat` 混在一起。
+本文只记录 `Graphics.dll`、`RenderDX.dll`、`Sound.dll` 三个运行时模块
 
 ## 1. 总体关系
 
@@ -152,7 +152,7 @@ GetErrorMessage
 - `GetBits` / `GetPitch` 说明它直接管理可访问的像素缓冲
 - `RenderSceen` / `RenderSceenHDC` 是最终提交到屏幕的出口
 
-`RenderDX.dll` 里还能看到 `d3d9.dll` / `d3d9d.dll` 的动态装载痕迹，说明它确实是 Direct3D 后端，而不是脚本 VM 或别的虚拟层。
+`RenderDX.dll` 里还能看到 `d3d9.dll` / `d3d9d.dll` 的动态装载痕迹，说明它确实是 Direct3D 后端。
 
 ## 5. Sound.dll
 

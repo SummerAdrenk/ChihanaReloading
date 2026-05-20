@@ -1,6 +1,7 @@
-# message.dat / MsgTool 逻辑
+# message.dat 逻辑
 
-`message.dat` 是 `[SCR-MESSAGE]ver4.0` 文本库文件。它不是 VM；`.scr` 的 `opcode 7` 只持有 `Commands` 表索引，再由 `Commands` 表映射到消息 ID。
+`message.dat` 是 `[SCR-MESSAGE]ver4.0` 文本库文件。  
+`.scr` 的 `opcode 7` 持有 `Commands` 表索引，再由 `Commands` 表映射到消息 ID
 
 ## 二进制结构
 
@@ -44,7 +45,7 @@ Commands:
 byte[] rawTail
 ```
 
-`rawTail` 当前不参与文本读取路径，但回封必须原样保留。
+`rawTail` 当前不参与文本读取路径，但回封必须原样保留
 
 ## 可编辑文本格式
 
@@ -70,7 +71,7 @@ byte[] rawTail
 - `B` 更新 `Choices`
 - `C...msg` 更新 `Messages`
 - `C...name` 是辅助显示，不写回
-- `branchXX` 标签只用于编辑上下文，导入时会剥离
+- `branchXX` 标签表示使用自定义人名的分支，只用于编辑上下文，导入时会剥离
 
 ## Kaguya_YaneKit CLI
 
@@ -129,26 +130,6 @@ Kaguya_YaneKit/ini/message_config.ini
 ```text
 Kaguya_YaneKit/docs/legacy/MsgTool_README.md
 ```
-
-## 与旧 MsgTool 的功能差异
-
-已经迁移到 `Kaguya_YaneKit` 的部分：
-
-- 导出 / 导入 `message.dat`
-- XOR 加密检测与回封
-- 配置 profile 的占位符替换
-- 编码覆盖
-- 默认配置 `ini/message_config.ini`
-- command/name/message 的辅助显示
-- branch 标签导出与导入剥离
-- `.scr` 联动分割 / 合并
-- `AdjustBranchMessages`
-- `GBKCheck`
-- `MsgLengthCheck`
-- `MsgLengthFix`
-- `MsgLengthSet`
-
-这些翻译辅助策略不属于 `message.dat` 基础结构，所以实现放在 workflow 层，而不是二进制 codec。也就是说，它们不影响 `message.dat` 的解析、导入、导出和 byte-for-byte 回封闭环。
 
 ### 对话换行空格规则
 
