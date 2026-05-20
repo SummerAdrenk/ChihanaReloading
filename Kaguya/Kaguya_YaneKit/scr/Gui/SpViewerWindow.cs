@@ -620,7 +620,7 @@ internal sealed class SpViewerWindow : Window
                 foreach (var png in Directory.GetFiles(pngDir, "*.png", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
                 {
                     var name = Path.GetFileNameWithoutExtension(png);
-                    if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("BG", StringComparison.OrdinalIgnoreCase))
+                    if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("BG", StringComparison.Ordinal))
                     {
                         list.Add(new SpBackgroundEntry(name, png));
                         continue;
