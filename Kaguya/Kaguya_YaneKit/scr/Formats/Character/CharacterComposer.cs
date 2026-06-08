@@ -325,6 +325,42 @@ public static class CharacterComposer
         }
     }
 
+    internal static IEnumerable<SpCompositionPlan> BuildSpPlansFromLayerGroups(
+        IEnumerable<SpLayerGroup> groups,
+        ISet<string> usedStaticKeys,
+        ISet<string> usedAnimatedKeys)
+    {
+        foreach (var group in groups)
+        {
+            if (group.Layers.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var layer in group.Layers)
+            {
+                if (layer.FormatTag.Equals("anm", StringComparison.OrdinalIgnoreCase))
+                {
+                    usedAnimatedKeys.Add(layer.ResourceKey);
+                }
+                else
+                {
+                    usedStaticKeys.Add(layer.ResourceKey);
+                }
+            }
+
+            var archiveName = string.IsNullOrWhiteSpace(group.ArchiveName)
+                ? BuildArchiveSummary(group.Layers.Select(layer => layer.ArchiveName))
+                : group.ArchiveName;
+
+            yield return new SpCompositionPlan(archiveName, group.Index, group.LabelParts, group.Layers)
+            {
+                CharacterHint = group.CharacterHint,
+                SourceName = group.SourceName
+            };
+        }
+    }
+
     private static IEnumerable<string> ResolvePatternArrayResources(ParamsPattern pattern, IReadOnlyList<uint> array)
     {
         foreach (var rawIndex in array)
@@ -527,7 +563,7 @@ public static class CharacterComposer
         return false;
     }
 
-    private static bool TryResolveResource(string resourcePath, IReadOnlyDictionary<string, LayerAsset> staticAssets, IReadOnlyDictionary<string, LayerAsset> animatedAssets, out LayerAsset asset)
+    internal static bool TryResolveResource(string resourcePath, IReadOnlyDictionary<string, LayerAsset> staticAssets, IReadOnlyDictionary<string, LayerAsset> animatedAssets, out LayerAsset asset)
     {
         foreach (var key in BuildCandidateResourceKeys(resourcePath, includeAnimated: true))
         {
@@ -803,7 +839,7 @@ public static class CharacterComposer
         }
     }
 
-    private static void RecordMissingReference(CharacterComposeResult result, string resourcePath)
+    internal static void RecordMissingReference(CharacterComposeResult result, string resourcePath)
     {
         result.MissingReferenceCount++;
         if (result.MissingReferenceSamples.Count < 20 && !result.MissingReferenceSamples.Any(sample => string.Equals(sample, resourcePath, StringComparison.OrdinalIgnoreCase)))
@@ -874,6 +910,9 @@ public static class CharacterComposer
         public static LayerAsset CreateAnimated(string archiveName, string relativeName, IReadOnlyList<string> framePaths, int offsetX, int offsetY)
             => new(archiveName, "anm", relativeName, framePaths, offsetX, offsetY);
 
+        public LayerAsset WithOffset(int offsetX, int offsetY)
+            => new(ArchiveName, FormatTag, RelativeName, FramePaths, offsetX, offsetY);
+
         public string GetFramePath(int frameIndex)
         {
             if (FramePaths.Count == 0)
@@ -897,8 +936,18 @@ public static class CharacterComposer
 
     private sealed record CgCompositionPlan(string ArchiveName, int Index, IReadOnlyList<string> LabelParts, IReadOnlyList<LayerAsset> Layers);
 
+    internal sealed record SpLayerGroup(
+        string ArchiveName,
+        int Index,
+        IReadOnlyList<string> LabelParts,
+        IReadOnlyList<LayerAsset> Layers,
+        string? CharacterHint = null,
+        string? SourceName = null);
+
     internal sealed record SpCompositionPlan(string ArchiveName, int Index, IReadOnlyList<string> LabelParts, IReadOnlyList<LayerAsset> Layers)
     {
+        public string? CharacterHint { get; init; }
+        public string? SourceName { get; init; }
         public bool RequiresFrames => Layers.Any(layer => layer.RequiresFrames);
     }
 

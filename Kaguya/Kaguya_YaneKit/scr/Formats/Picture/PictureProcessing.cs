@@ -17,7 +17,9 @@ namespace Kaguya_YaneKit.Formats.Picture;
 
 internal static class PictureProcessing
 {
-    public const int MaxDegreeOfParallelism = 128;
+    public static int MaxDegreeOfParallelism { get; } = ReadMaxDegreeOfParallelism(
+        "KAGUYA_PIC_PARALLELISM",
+        Environment.ProcessorCount * 4);
 
     private static readonly object ConsoleLock = new();
 
@@ -26,12 +28,23 @@ internal static class PictureProcessing
         MaxDegreeOfParallelism = MaxDegreeOfParallelism
     };
 
+    private static int ReadMaxDegreeOfParallelism(string variableName, int defaultValue)
+    {
+        var value = Environment.GetEnvironmentVariable(variableName);
+        if (int.TryParse(value, out var parsed) && parsed > 0)
+        {
+            return Math.Clamp(parsed, 1, 64);
+        }
+
+        return Math.Clamp(defaultValue, 1, 32);
+    }
+
     // 线程安全的控制台输出, 防止多线程交叉打印
     public static void WriteLine(string message)
     {
         lock (ConsoleLock)
         {
-            Console.WriteLine(message);
+            Console.WriteLine(message.StartsWith("  ", StringComparison.Ordinal) ? message : $"  {message}");
         }
     }
 
@@ -44,6 +57,19 @@ internal static class PictureProcessing
     public interface IProgressScope : IDisposable
     {
         void Increment();
+    }
+
+    public static IProgressScope NullProgress { get; } = new NullProgressScope();
+
+    private sealed class NullProgressScope : IProgressScope
+    {
+        public void Increment()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     // 进度追踪实现: 按 10% 间隔汇报, 支持多线程安全递增

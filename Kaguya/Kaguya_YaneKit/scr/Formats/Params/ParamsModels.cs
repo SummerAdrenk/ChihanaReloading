@@ -1,6 +1,6 @@
 // ============================================================================
 // ParamsModels.cs
-// params.dat 二进制格式的数据模型定义 (支持 [SCR-PARAMS]v05.4 ~ v05.8)
+// params.dat 二进制格式的数据模型定义 (支持 [SCR-PARAMS]v05, v05.1, v05.3 ~ v05.8)
 //
 // 顶层文档: ParamsDatDocument
 //   - Header          : 版本头 "[SCR-PARAMS]v05.x"
@@ -10,7 +10,7 @@
 //
 // GameSystem 子结构:
 //   ParamsInstallEntry     -- 安装文件条目 (File + Media)
-//   ParamsRawBlob          -- 原始字节载荷 (base64, 可能为位图数据)
+//   ParamsRawBlob          -- LINK6 XOR key bytes stored as a length-prefixed byte array
 //   ParamsOptionalSettingTag / ParamsSettingTag / ParamsSettingPair
 //                          -- 可选设置树 (Name + key-value 对 + 子节点)
 //   ParamsDemo / ParamsDemoCommand
@@ -36,9 +36,15 @@ namespace Kaguya_YaneKit.Formats.Params;
 public sealed class ParamsDatDocument
 {
     public string Header { get; set; } = ParamsDatCodec.ExpectedHeader;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyReadEncoding { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyWriteEncoding { get; set; }
     public ParamsGameSystem GameSystem { get; set; } = new();
     public ParamsPattern Pattern { get; set; } = new();
     public List<ParamsSceneLabel> SceneLabels { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public byte? V04SceneLabelXorKey { get; set; }
 }
 
 public sealed class ParamsGameSystem
@@ -52,6 +58,8 @@ public sealed class ParamsGameSystem
     public string GameTitle { get; set; } = "";
     public string DisplayTitle { get; set; } = "";
     public string Brand { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public string V02Copyright { get; set; } = "";
     public byte StaffFlag { get; set; }
     public string StaffName1 { get; set; } = "";
     public string StaffName2 { get; set; } = "";
@@ -60,16 +68,57 @@ public sealed class ParamsGameSystem
     public byte V5TailByte { get; set; }
     public List<ParamsOptionalSettingTag> SettingTags { get; set; } = [];
     public uint V53TripleRawCount { get; set; }
+    public List<ParamsV53Triple> V53Triples { get; set; } = [];
     public ParamsRawBlob RawBlob { get; set; } = new();
     public List<ParamsDemo> Demos { get; set; } = [];
     public List<string> V51StringList { get; set; } = [];
     public uint V51PlaceCount { get; set; }
+    public List<ParamsV51Place> V51Places { get; set; } = [];
     public string V54NestedListName { get; set; } = "";
     public uint V54NestedOuterCount { get; set; }
     public List<ParamsThumbnail> Thumbnails { get; set; } = [];
     public List<string> SceneNames { get; set; } = [];
     public List<ParamsRegistCgGroup> RegistCg { get; set; } = [];
     public List<ParamsRegistSceneGroup> RegistScene { get; set; } = [];
+    public List<ParamsV51VoiceEntry> V51VoiceEntries { get; set; } = [];
+    public List<ParamsV51ByteGroup> V51ByteGroups { get; set; } = [];
+    public List<ParamsV51SoundGroup> V51SoundGroups { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public byte? V04XorKey { get; set; }
+}
+
+public sealed class ParamsV51Place
+{
+    public string Name { get; set; } = "";
+    public uint Value { get; set; }
+}
+
+public sealed class ParamsV51VoiceEntry
+{
+    public byte Flag { get; set; }
+    public string Name { get; set; } = "";
+    public List<string> Primary { get; set; } = [];
+    public List<string> Secondary { get; set; } = [];
+}
+
+public sealed class ParamsV51ByteGroup
+{
+    public string Name { get; set; } = "";
+    public List<byte> Values { get; set; } = [];
+}
+
+public sealed class ParamsV51SoundGroup
+{
+    public string Name { get; set; } = "";
+    public List<string> Primary { get; set; } = [];
+    public List<string> Secondary { get; set; } = [];
+}
+
+public sealed class ParamsV53Triple
+{
+    public uint Value1 { get; set; }
+    public uint Value2 { get; set; }
+    public uint Value3 { get; set; }
 }
 
 public sealed class ParamsInstallEntry
@@ -80,12 +129,13 @@ public sealed class ParamsInstallEntry
 
 public sealed class ParamsRawBlob
 {
-    public string Description { get; set; } = "GameSystem byte-array payload. Loader reads length + raw bytes and stores it as array<unsigned char>.";
+    public string Description { get; set; } = "LINK6 XOR key bytes. GameSystem stores this as u32 length + byte[length]; encrypted archive entries use it as the repeating XOR key.";
     public string Encoding { get; set; } = "base64";
     public uint? ExpectedWidth { get; set; }
     public uint? ExpectedHeight { get; set; }
     public uint? ExpectedBytesPerPixel { get; set; }
-    public string DataBase64 { get; set; } = "";
+    public int KeyByteLength { get; set; }
+    public string LinkXorKeyBase64 { get; set; } = "";
 }
 
 public sealed class ParamsOptionalSettingTag
@@ -182,6 +232,8 @@ public sealed class ParamsPattern
     public List<List<uint>> IntArrays { get; set; } = [];
     public ParamsPatternGroupTable GroupTable1 { get; set; } = new();
     public ParamsPatternGroupTable GroupTable2 { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public byte? V04XorKey { get; set; }
 }
 
 public sealed class ParamsPatternItem

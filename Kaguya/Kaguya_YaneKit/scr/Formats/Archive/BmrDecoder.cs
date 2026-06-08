@@ -42,6 +42,7 @@ public sealed class BmrDecoder
     private readonly int _finalSize;
     private readonly int _key;
     private readonly int _unpackedSize;
+    private readonly int _huffmanSize;
     private readonly byte[] _input;
 
     public BmrDecoder(byte[] data)
@@ -55,6 +56,9 @@ public sealed class BmrDecoder
         _finalSize = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(4));
         _key = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(8));
         _unpackedSize = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(12));
+        _huffmanSize = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(16));
+        if (_huffmanSize < 0 || 0x14 + _huffmanSize > data.Length)
+            throw new InvalidDataException("BMR Huffman stream size is invalid.");
         _input = data;
     }
 
@@ -63,7 +67,7 @@ public sealed class BmrDecoder
 
     public byte[] Unpack()
     {
-        var bitReader = new MsbBitReader(_input, 0x14);
+        var bitReader = new MsbBitReader(_input, 0x14, _huffmanSize);
         var output = UnpackHuffman(bitReader, _unpackedSize);
         UndoMoveToFront(output);
         output = Decode(output, _key);
@@ -190,13 +194,15 @@ public sealed class BmrDecoder
     {
         private readonly byte[] _data;
         private int _pos;
+        private readonly int _end;
         private int _bitsLeft;
         private int _currentByte;
 
-        public MsbBitReader(byte[] data, int offset)
+        public MsbBitReader(byte[] data, int offset, int length)
         {
             _data = data;
             _pos = offset;
+            _end = offset + length;
             _bitsLeft = 0;
             _currentByte = 0;
         }
@@ -205,7 +211,7 @@ public sealed class BmrDecoder
         {
             if (_bitsLeft == 0)
             {
-                if (_pos >= _data.Length) return -1;
+                if (_pos >= _end) return -1;
                 _currentByte = _data[_pos++];
                 _bitsLeft = 8;
             }

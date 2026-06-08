@@ -65,59 +65,67 @@ public static class ParamsCommands
 
     private static int Dump(string[] args)
     {
-        if (args.Length != 2)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 2)
         {
             PrintHelp();
             return 1;
         }
 
-        var document = ReadParams(args[1]);
-        PrintSummary(document, new FileInfo(args[1]).Length);
+        var document = ReadParams(positional[1], readEncoding, writeEncoding);
+        PrintSummary(document, new FileInfo(positional[1]).Length);
         return 0;
     }
 
     private static int ExportJson(string[] args)
     {
-        if (args.Length != 3)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 3)
         {
             PrintHelp();
             return 1;
         }
 
-        var document = ReadParams(args[1]);
-        ReadableUnicodeJson.WriteAllText(args[2], JsonSerializer.Serialize(document, JsonOptions));
-        Console.WriteLine($"Wrote {args[2]}");
-        PrintSummary(document, new FileInfo(args[1]).Length);
+        var document = ReadParams(positional[1], readEncoding, writeEncoding);
+        ReadableUnicodeJson.WriteAllText(positional[2], JsonSerializer.Serialize(document, JsonOptions));
+        Console.WriteLine($"Wrote {positional[2]}");
+        PrintSummary(document, new FileInfo(positional[1]).Length);
         return 0;
     }
 
     private static int ImportJson(string[] args)
     {
-        if (args.Length != 3)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 3)
         {
             PrintHelp();
             return 1;
         }
 
-        var document = JsonSerializer.Deserialize<ParamsDatDocument>(File.ReadAllText(args[1], Encoding.UTF8), JsonOptions)
+        var document = JsonSerializer.Deserialize<ParamsDatDocument>(File.ReadAllText(positional[1], Encoding.UTF8), JsonOptions)
             ?? throw new InvalidDataException("JSON did not contain a params document.");
-        File.WriteAllBytes(args[2], new ParamsDatCodec().Write(document));
-        Console.WriteLine($"Wrote {args[2]}");
-        PrintSummary(document, new FileInfo(args[2]).Length);
+        var codec = new ParamsDatCodec(
+            readEncoding ?? document.LegacyReadEncoding,
+            writeEncoding ?? document.LegacyWriteEncoding ?? readEncoding ?? document.LegacyReadEncoding);
+        File.WriteAllBytes(positional[2], codec.Write(document));
+        Console.WriteLine($"Wrote {positional[2]}");
+        PrintSummary(document, new FileInfo(positional[2]).Length);
         return 0;
     }
 
     private static int Verify(string[] args)
     {
-        if (args.Length != 2)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 2)
         {
             PrintHelp();
             return 1;
         }
 
-        var original = File.ReadAllBytes(args[1]);
-        var codec = new ParamsDatCodec();
+        var original = File.ReadAllBytes(positional[1]);
+        var codec = new ParamsDatCodec(readEncoding, writeEncoding);
         var document = codec.Read(original);
+        PrintVersion(document);
         var rebuilt = codec.Write(document);
         var equal = original.SequenceEqual(rebuilt);
         Console.WriteLine(equal
@@ -129,15 +137,17 @@ public static class ParamsCommands
     // JSON 回环校验: binary -> JSON -> deserialize -> binary -> compare
     private static int VerifyJson(string[] args)
     {
-        if (args.Length != 2)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 2)
         {
             PrintHelp();
             return 1;
         }
 
-        var original = File.ReadAllBytes(args[1]);
-        var codec = new ParamsDatCodec();
+        var original = File.ReadAllBytes(positional[1]);
+        var codec = new ParamsDatCodec(readEncoding, writeEncoding);
         var document = codec.Read(original);
+        PrintVersion(document);
         var json = JsonSerializer.Serialize(document, JsonOptions);
         var reparsed = JsonSerializer.Deserialize<ParamsDatDocument>(json, JsonOptions)
             ?? throw new InvalidDataException("JSON did not contain a params document.");
@@ -151,42 +161,80 @@ public static class ParamsCommands
 
     private static int ExtractRaw(string[] args)
     {
-        if (args.Length != 3)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 3)
         {
             PrintHelp();
             return 1;
         }
 
-        var document = ReadParams(args[1]);
-        File.WriteAllBytes(args[2], Convert.FromBase64String(document.GameSystem.RawBlob.DataBase64));
-        Console.WriteLine($"Wrote {args[2]}");
+        var document = ReadParams(positional[1], readEncoding, writeEncoding);
+        PrintVersion(document);
+        File.WriteAllBytes(positional[2], Convert.FromBase64String(document.GameSystem.RawBlob.LinkXorKeyBase64));
+        Console.WriteLine($"Wrote {positional[2]}");
         return 0;
     }
 
     // 替换 RawBlob 并自动计算 BPP (每像素字节数)
     private static int ReplaceRaw(string[] args)
     {
-        if (args.Length != 4)
+        var (positional, readEncoding, writeEncoding) = ParseOptions(args);
+        if (positional.Count != 4)
         {
             PrintHelp();
             return 1;
         }
 
-        var codec = new ParamsDatCodec();
-        var document = codec.Read(File.ReadAllBytes(args[1]));
-        var raw = File.ReadAllBytes(args[2]);
-        document.GameSystem.RawBlob.DataBase64 = Convert.ToBase64String(raw);
+        var codec = new ParamsDatCodec(readEncoding, writeEncoding);
+        var document = codec.Read(File.ReadAllBytes(positional[1]));
+        PrintVersion(document);
+        var raw = File.ReadAllBytes(positional[2]);
+        document.GameSystem.RawBlob.KeyByteLength = raw.Length;
+        document.GameSystem.RawBlob.LinkXorKeyBase64 = Convert.ToBase64String(raw);
         document.GameSystem.RawBlob.ExpectedBytesPerPixel = CalculateBytesPerPixel(
             raw.Length,
             document.GameSystem.Width,
             document.GameSystem.Height);
-        File.WriteAllBytes(args[3], codec.Write(document));
-        Console.WriteLine($"Wrote {args[3]}");
+        File.WriteAllBytes(positional[3], codec.Write(document));
+        Console.WriteLine($"Wrote {positional[3]}");
         Console.WriteLine($"RawBlob: {raw.Length} bytes");
         return 0;
     }
 
-    private static ParamsDatDocument ReadParams(string path) => new ParamsDatCodec().Read(File.ReadAllBytes(path));
+    private static ParamsDatDocument ReadParams(string path, string? readEncoding = null, string? writeEncoding = null) =>
+        new ParamsDatCodec(readEncoding, writeEncoding).Read(File.ReadAllBytes(path));
+
+    private static (List<string> Positional, string? ReadEncoding, string? WriteEncoding) ParseOptions(string[] args)
+    {
+        var positional = new List<string>();
+        string? readEncoding = null;
+        string? writeEncoding = null;
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--read-encoding":
+                    if (++i >= args.Length)
+                    {
+                        throw new ArgumentException("--read-encoding requires a value.");
+                    }
+                    readEncoding = args[i];
+                    break;
+                case "--write-encoding":
+                    if (++i >= args.Length)
+                    {
+                        throw new ArgumentException("--write-encoding requires a value.");
+                    }
+                    writeEncoding = args[i];
+                    break;
+                default:
+                    positional.Add(args[i]);
+                    break;
+            }
+        }
+
+        return (positional, readEncoding, writeEncoding);
+    }
 
     private static uint? CalculateBytesPerPixel(int byteLength, uint width, uint height)
     {
@@ -201,13 +249,21 @@ public static class ParamsCommands
 
     private static void PrintSummary(ParamsDatDocument document, long size)
     {
-        var rawBlobBytes = Convert.FromBase64String(document.GameSystem.RawBlob.DataBase64).Length;
+        var rawBlobBytes = Convert.FromBase64String(document.GameSystem.RawBlob.LinkXorKeyBase64).Length;
         Console.WriteLine($"Header: {document.Header}");
         Console.WriteLine($"Version: {ParamsDatCodec.DescribeVersion(document.Header)}");
         Console.WriteLine($"Size: {size} bytes");
         Console.WriteLine($"Canvas: {document.GameSystem.Width}x{document.GameSystem.Height}");
         Console.WriteLine($"Install entries: {document.GameSystem.InstallTable.Count}");
         Console.WriteLine($"Setting roots: {document.GameSystem.SettingTags.Count(x => x.Present)}");
+        if (document.GameSystem.V51VoiceEntries.Count > 0 ||
+            document.GameSystem.V51ByteGroups.Count > 0 ||
+            document.GameSystem.V51SoundGroups.Count > 0)
+        {
+            Console.WriteLine($"v05.1 voice entries: {document.GameSystem.V51VoiceEntries.Count}");
+            Console.WriteLine($"v05.1 byte groups: {document.GameSystem.V51ByteGroups.Count}");
+            Console.WriteLine($"v05.1 sound groups: {document.GameSystem.V51SoundGroups.Count}");
+        }
         Console.WriteLine($"RawBlob: {rawBlobBytes} bytes");
         Console.WriteLine($"Demos: {document.GameSystem.Demos.Count}");
         Console.WriteLine($"Thumbnails: {document.GameSystem.Thumbnails.Count}");
@@ -221,6 +277,12 @@ public static class ParamsCommands
         Console.WriteLine($"Scene labels: {document.SceneLabels.Count}");
     }
 
+    private static void PrintVersion(ParamsDatDocument document)
+    {
+        Console.WriteLine($"Header: {document.Header}");
+        Console.WriteLine($"Version: {ParamsDatCodec.DescribeVersion(document.Header)}");
+    }
+
     private static int Unknown(string command)
     {
         Console.Error.WriteLine($"Unknown params command: {command}");
@@ -232,11 +294,11 @@ public static class ParamsCommands
     {
         Console.WriteLine("params commands:");
         Console.WriteLine("  params dump <params.dat>");
-        Console.WriteLine("  params export-json <params.dat> <output.json>");
-        Console.WriteLine("  params import-json <input.json> <output.dat>");
-        Console.WriteLine("  params verify <params.dat>");
-        Console.WriteLine("  params verify-json <params.dat>");
-        Console.WriteLine("  params extract-raw <params.dat> <raw.bin>");
-        Console.WriteLine("  params replace-raw <params.dat> <raw.bin> <output.dat>");
+        Console.WriteLine("  params export-json <params.dat> <output.json> [--read-encoding cp932] [--write-encoding cp932]");
+        Console.WriteLine("  params import-json <input.json> <output.dat> [--read-encoding cp932] [--write-encoding cp932]");
+        Console.WriteLine("  params verify <params.dat> [--read-encoding cp932] [--write-encoding cp932]");
+        Console.WriteLine("  params verify-json <params.dat> [--read-encoding cp932] [--write-encoding cp932]");
+        Console.WriteLine("  params extract-raw <params.dat> <raw.bin> [--read-encoding cp932]");
+        Console.WriteLine("  params replace-raw <params.dat> <raw.bin> <output.dat> [--read-encoding cp932] [--write-encoding cp932]");
     }
 }

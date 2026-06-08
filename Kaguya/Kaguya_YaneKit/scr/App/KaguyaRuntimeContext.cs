@@ -27,9 +27,13 @@ public sealed class KaguyaRuntimeContext
     public string GameRoot { get; init; } = "";
     public string WorkDirectory { get; init; } = "";
     public string? ParamsPath { get; init; }
+    public string? TblstrArchivePath { get; init; }
     public ParamsDatDocument? Params { get; init; }
     public byte[]? LinkEncryptionKey { get; init; }
     public string? ParamsVersion => Params is null ? null : ParamsDatCodec.DescribeVersion(Params.Header);
+    public bool IsParamsFamily => ParamsPath is not null;
+    public bool IsTblstrFamily => ParamsPath is null;
+    public string EngineProfile => IsParamsFamily ? "Params系" : IsTblstrFamily ? "TBLSTR系" : "未识别";
 
     public static KaguyaRuntimeContext Create(string? gameRoot = null, string? workDirectory = null, string? paramsPath = null)
     {
@@ -37,13 +41,14 @@ public sealed class KaguyaRuntimeContext
         var resolvedParamsPath = ResolveParamsPath(gameRoot, paramsPath);
         var resolvedGameRoot = ResolveGameRoot(gameRoot, resolvedParamsPath);
         var resolvedWorkDirectory = Path.GetFullPath(workDirectory ?? Path.Combine(toolDirectory, "workplace"));
+        var resolvedTblstrArchivePath = ResolveTblstrArchivePath(resolvedGameRoot);
 
         ParamsDatDocument? document = null;
         byte[]? linkKey = null;
         if (resolvedParamsPath is not null)
         {
             document = new ParamsDatCodec().Read(File.ReadAllBytes(resolvedParamsPath));
-            linkKey = Convert.FromBase64String(document.GameSystem.RawBlob.DataBase64);
+            linkKey = Convert.FromBase64String(document.GameSystem.RawBlob.LinkXorKeyBase64);
         }
 
         return new KaguyaRuntimeContext
@@ -52,6 +57,7 @@ public sealed class KaguyaRuntimeContext
             GameRoot = resolvedGameRoot,
             WorkDirectory = resolvedWorkDirectory,
             ParamsPath = resolvedParamsPath,
+            TblstrArchivePath = resolvedTblstrArchivePath,
             Params = document,
             LinkEncryptionKey = linkKey
         };
@@ -95,6 +101,20 @@ public sealed class KaguyaRuntimeContext
 
         candidates.Add(Path.Combine(Environment.CurrentDirectory, "params.dat"));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "params.dat"));
+
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string? ResolveTblstrArchivePath(string gameRoot)
+    {
+        var root = Path.GetFullPath(gameRoot);
+        var candidates = new[]
+        {
+            Path.Combine(root, "tblstr.arc"),
+            Path.Combine(root, "TBLSTR.ARC"),
+            Path.Combine(root, "arc", "tblstr.arc"),
+            Path.Combine(root, "ARC", "TBLSTR.ARC")
+        };
 
         return candidates.FirstOrDefault(File.Exists);
     }

@@ -3,6 +3,11 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- 本工具目前只面向 Windows x64；限制 RID 可避免 Avalonia/SkiaSharp 复制 linux/osx/arm 等运行时资产。 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- 保持原有 bin/Release/net8.0-windows 输出路径，避免现有脚本因为 RID 子目录变化失效。 -->
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <SelfContained>false</SelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

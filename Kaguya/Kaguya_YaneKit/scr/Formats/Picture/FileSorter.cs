@@ -18,12 +18,23 @@
 // ============================================================================
 using Kaguya_YaneKit.Formats.Picture.Handlers;
 using System.Text.Json;
+using System.Text;
 using Kaguya_YaneKit.Core;
 
 namespace Kaguya_YaneKit.Formats.Picture;
 
 public static class FileSorter
 {
+    public readonly record struct SortSummary(int Total, int Success, int Failure, int Skipped, int Unrecognized)
+    {
+        public SortSummary Add(SortSummary other) => new(
+            Total + other.Total,
+            Success + other.Success,
+            Failure + other.Failure,
+            Skipped + other.Skipped,
+            Unrecognized + other.Unrecognized);
+    }
+
     private sealed class BaseMetadata
     {
         public string OriginalRelativePath { get; set; } = "";
@@ -36,18 +47,22 @@ public static class FileSorter
         new Ap2Handler(),
         new Ap3Handler(),
         new AnmHandler(),
+        new PltHandler(),
         new BmpHandler(),
         new ApHandler(),
     };
+
+    private static readonly Dictionary<string, IFormatHandler> HandlersByTag = Handlers
+        .ToDictionary(handler => handler.Tag, StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> SkipExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".json", ".txt", ".xml", ".ini", ".csv", ".log"
     };
 
-    public static void Sort(string sourceDir, string workDir)
+    public static SortSummary Sort(string sourceDir, string workDir)
     {
-        Sort(sourceDir, workDir, originalPathPrefix: null, sourceArchive: null);
+        return Sort(sourceDir, workDir, originalPathPrefix: null, sourceArchive: null);
     }
 
     public static bool SortArchiveDirectories(string sourceRoot, string workRoot)
@@ -56,6 +71,7 @@ public static class FileSorter
         workRoot = Path.GetFullPath(workRoot);
 
         var archiveDirs = Directory.EnumerateFiles(sourceRoot, "_link_manifest.json", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(sourceRoot, "_archive_manifest.json", SearchOption.AllDirectories))
             .Select(Path.GetDirectoryName)
             .Where(dir => !string.IsNullOrWhiteSpace(dir))
             .Select(dir => dir!)
@@ -77,36 +93,32 @@ public static class FileSorter
         return true;
     }
 
-    public static void Sort(string sourceDir, string workDir, string? originalPathPrefix, string? sourceArchive)
+    public static SortSummary Sort(string sourceDir, string workDir, string? originalPathPrefix, string? sourceArchive, bool quiet = false, Action<int, int>? progress = null)
     {
         sourceDir = Path.GetFullPath(sourceDir);
         workDir = Path.GetFullPath(workDir);
 
         var allFiles = Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories);
         int success = 0, failure = 0, skipped = 0, unrecognized = 0;
+        var completed = 0;
+        var total = allFiles.Length;
 
         Parallel.ForEach(allFiles, PictureProcessing.ParallelOptions, file =>
         {
-            var ext = Path.GetExtension(file);
-            if (SkipExtensions.Contains(ext))
-            {
-                Interlocked.Increment(ref skipped);
-                return;
-            }
-
             try
             {
+                var ext = Path.GetExtension(file);
+                if (SkipExtensions.Contains(ext))
+                {
+                    Interlocked.Increment(ref skipped);
+                    return;
+                }
+
                 using var stream = File.OpenRead(file);
                 using var reader = new BinaryReader(stream);
-                bool matched = false;
-                foreach (var handler in Handlers)
+                var matched = TryIdentifyHandler(reader, out var handler);
+                if (matched)
                 {
-                    if (!handler.Identify(reader))
-                    {
-                        continue;
-                    }
-
-                    matched = true;
                     var relativePath = Path.GetRelativePath(sourceDir, file);
 
                     var formatDir = Path.Combine(workDir, handler.Tag);
@@ -115,7 +127,7 @@ public static class FileSorter
 
                     var destOrigPath = Path.Combine(origDir, relativePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destOrigPath)!);
-                    File.Copy(file, destOrigPath, true);
+                    CopyIfChanged(file, destOrigPath);
 
                     var originalRelativePath = string.IsNullOrWhiteSpace(originalPathPrefix)
                         ? relativePath
@@ -129,34 +141,150 @@ public static class FileSorter
                     var json = JsonSerializer.Serialize(metadata, serializerOptions);
 
                     string destMetaPath;
-                    if (handler is AnmHandler)
+                    if (handler is AnmHandler or PltHandler)
                     {
                         destMetaPath = Path.Combine(metaDir, relativePath + ".json");
                     }
                     else
                     {
-                        destMetaPath = Path.Combine(metaDir, Path.ChangeExtension(relativePath, ".json"));
+                        destMetaPath = Path.Combine(metaDir, PicturePathHelper.ChangeExtensionPreservingName(relativePath, ".json"));
                     }
 
                     Directory.CreateDirectory(Path.GetDirectoryName(destMetaPath)!);
-                    ReadableUnicodeJson.WriteAllText(destMetaPath, json);
+                    WriteTextIfChanged(destMetaPath, json);
                     Interlocked.Increment(ref success);
-                    break;
                 }
 
                 if (!matched)
                 {
-                    PictureProcessing.WriteLine($"[Unrecognized] {Path.GetRelativePath(sourceDir, file)}");
+                    if (!quiet)
+                    {
+                        PictureProcessing.WriteLine($"[Unrecognized] {Path.GetRelativePath(sourceDir, file)}");
+                    }
                     Interlocked.Increment(ref unrecognized);
                 }
             }
             catch (Exception ex)
             {
-                PictureProcessing.WriteLine($"Failed to process \"{Path.GetFileName(file)}\": {ex.Message}");
+                if (!quiet)
+                {
+                    PictureProcessing.WriteLine($"Failed to process \"{Path.GetFileName(file)}\": {ex.Message}");
+                }
                 Interlocked.Increment(ref failure);
+            }
+            finally
+            {
+                progress?.Invoke(Interlocked.Increment(ref completed), total);
             }
         });
 
-        Console.WriteLine($"  [SORT] done: {allFiles.Length} total, {success} success, {failure} failure, {skipped} skipped, {unrecognized} unrecognized.");
+        var summary = new SortSummary(allFiles.Length, success, failure, skipped, unrecognized);
+        if (!quiet)
+        {
+            Console.WriteLine($"  [SORT] done: {summary.Total} total, {summary.Success} success, {summary.Failure} failure, {summary.Skipped} skipped, {summary.Unrecognized} unrecognized.");
+        }
+
+        return summary;
+    }
+
+    private static void CopyIfChanged(string sourcePath, string destinationPath)
+    {
+        if (File.Exists(destinationPath))
+        {
+            var source = new FileInfo(sourcePath);
+            var destination = new FileInfo(destinationPath);
+            if (source.Length == destination.Length &&
+                source.LastWriteTimeUtc == destination.LastWriteTimeUtc)
+            {
+                return;
+            }
+        }
+
+        File.Copy(sourcePath, destinationPath, true);
+    }
+
+    private static void WriteTextIfChanged(string path, string text)
+    {
+        if (File.Exists(path) && string.Equals(File.ReadAllText(path), text, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ReadableUnicodeJson.WriteAllText(path, text);
+    }
+
+    private static bool TryIdentifyHandler(BinaryReader reader, out IFormatHandler handler)
+    {
+        handler = null!;
+        var stream = reader.BaseStream;
+        if (stream.Length < 2)
+        {
+            return false;
+        }
+
+        Span<byte> header = stackalloc byte[5];
+        stream.Position = 0;
+        var read = stream.Read(header);
+        stream.Position = 0;
+
+        var tag = GetTagFromHeader(header[..read]);
+        if (tag is null || !HandlersByTag.TryGetValue(tag, out var candidate))
+        {
+            return false;
+        }
+
+        handler = candidate;
+        var identified = handler.Identify(reader);
+        stream.Position = 0;
+        if (!identified)
+        {
+            handler = null!;
+        }
+
+        return identified;
+    }
+
+    private static string? GetTagFromHeader(ReadOnlySpan<byte> header)
+    {
+        if (header.Length >= 4)
+        {
+            var signature = Encoding.ASCII.GetString(header[..4]);
+            return signature switch
+            {
+                "AP-0" => "ap0",
+                "AP-2" => "ap2",
+                "AP-3" => "ap3",
+                "AN00" or "AN01" or "AN20" or "AN21" => "anm",
+                "PL00" or "PL01" or "PL10" or "PL11" or "PL20" or "PL30" => "plt",
+                _ => GetContainerTagFromHeader(header)
+            };
+        }
+
+        return GetContainerTagFromHeader(header);
+    }
+
+    private static string? GetContainerTagFromHeader(ReadOnlySpan<byte> header)
+    {
+        if (header.Length >= 5 && header[0] == 4)
+        {
+            var signature = Encoding.ASCII.GetString(header.Slice(1, 4));
+            if (signature is "APS3" or "APS4")
+            {
+                return "ap3";
+            }
+        }
+
+        if (header.Length >= 2)
+        {
+            var magic = (ushort)(header[0] | (header[1] << 8));
+            return magic switch
+            {
+                0x4D42 => "bmp",
+                0x5041 or 0x4F41 => "ap",
+                _ => null
+            };
+        }
+
+        return null;
     }
 }

@@ -8,7 +8,7 @@
 //   3. 有子命令时创建 KaguyaRuntimeContext 并路由到对应 Commands 类
 //
 // 子命令路由表:
-//   scr       -> ScrCommands         (脚本反汇编/汇编/校验)
+//   scr       -> ScrCommands         (脚本 HLS 高级解析/回编，低级 SCRASM 调试/校验)
 //   msg       -> MessageCommands     (message.dat 导入/导出/拆分/合并)
 //   params    -> ParamsCommands      (params.dat 导入/导出/校验)
 //   pic       -> PictureCommands     (图片分拣/转换/重打包/还原)
@@ -56,9 +56,13 @@ public static class KaguyaApp
                 Console.WriteLine("Self-test stub: core scaffolding is present.");
                 return 0;
             case "scr":
-                return ScrCommands.Run(args.Skip(1).ToArray());
+                return ScrCommands.Run(args.Skip(1).ToArray(), context);
             case "msg":
                 return MessageCommands.Run(args.Skip(1).ToArray());
+            case "tblstr":
+                return TblstrCommands.Run(args.Skip(1).ToArray());
+            case "tbl":
+                return TblCommands.Run(args.Skip(1).ToArray());
             case "params":
                 return ParamsCommands.Run(args.Skip(1).ToArray());
             case "pic":
@@ -67,6 +71,12 @@ public static class KaguyaApp
                 return CharacterCommands.Run(args.Skip(1).ToArray(), context);
             case "link":
                 return LinkCommands.Run(args.Skip(1).ToArray(), context);
+            case "pe":
+                return PeCommands.Run(args.Skip(1).ToArray());
+            case "archive_unpack":
+                return ArchiveCommands.Unpack(args.Skip(1).ToArray(), context);
+            case "archive_pack":
+                return ArchiveCommands.Pack(args.Skip(1).ToArray(), context);
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
                 return 1;
@@ -94,8 +104,16 @@ public static class KaguyaApp
         Console.WriteLine("    --self-test            Run a tiny format scaffold check");
         Console.WriteLine();
         Console.WriteLine("  Script commands:");
-        Console.WriteLine("    scr disasm <in> <out>  Disassemble .scr to editable text");
-        Console.WriteLine("    scr asm <in> <out>     Assemble editable text to .scr");
+        Console.WriteLine("    scr decompile <in> <out>");
+        Console.WriteLine("                           Default: emit conservative HLS high-level IR");
+        Console.WriteLine("    scr hls-asm <in> <out>");
+        Console.WriteLine("                           Default: assemble HLS high-level IR to .scr");
+        Console.WriteLine("    scr verify-hls <in>    Roundtrip-check .scr through HLS");
+        Console.WriteLine("    scr disasm <in> <out>  Low-level SCRASM disassembly for debugging");
+        Console.WriteLine("    scr asm <in> <out>     Low-level SCRASM assembly for debugging");
+        Console.WriteLine("    scr opcodes [out.md]   Export the centralized SCR opcode schema");
+        Console.WriteLine("    scr scan-opcodes <in|dir> [out.txt]");
+        Console.WriteLine("                           Scan for unknown opcodes/schema conflicts");
         Console.WriteLine("    scr verify <in>        Roundtrip-check .scr binary");
         Console.WriteLine("    scr dump <in>          Print a readable opcode listing");
         Console.WriteLine();
@@ -109,6 +127,22 @@ public static class KaguyaApp
         Console.WriteLine("    msg split <msg> <scrdir> <outdir>");
         Console.WriteLine("                           Split message text by .scr usage");
         Console.WriteLine();
+        Console.WriteLine("  TBLSTR commands:");
+        Console.WriteLine("    tblstr export <in.arc> <outdir> [--ini tblstr_config.ini]");
+        Console.WriteLine("                           Export TBLSTR text resource to text");
+        Console.WriteLine("    tblstr import <in.arc> <txt> <out.arc> [--ini tblstr_config.ini]");
+        Console.WriteLine("                           Import edited TBLSTR text and rebuild ARC");
+        Console.WriteLine("    tblstr split <in.arc> <scrdir> <outdir> [--ini tblstr_config.ini]");
+        Console.WriteLine("                           Split TBLSTR text by .scr usage");
+        Console.WriteLine("    tblstr merge <base.txt> <split-dir> <out.txt>");
+        Console.WriteLine("                           Merge split TBLSTR text back to flat text");
+        Console.WriteLine("    tblstr verify-text <in.arc> [--ini tblstr_config.ini]");
+        Console.WriteLine("                           Roundtrip-check TBLSTR text workflow");
+        Console.WriteLine("    tbl export <tbl-file|tbl-dir> <outdir> [--json]");
+        Console.WriteLine("                           Export TBLSTR-family .tbl support tables");
+        Console.WriteLine("    tbl verify <tbl-file|tbl-dir>");
+        Console.WriteLine("                           Roundtrip-check supported .tbl tables");
+        Console.WriteLine();
         Console.WriteLine("  Params commands:");
         Console.WriteLine("    params dump <in>       Print params.dat summary");
         Console.WriteLine("    params export-json <in> <out.json>");
@@ -119,6 +153,7 @@ public static class KaguyaApp
         Console.WriteLine("    pic sort <src> <dst>   Sort extracted files by format");
         Console.WriteLine("    pic convert <dir>      Convert originals to PNG");
         Console.WriteLine("    pic repack <dir>       Repack fixed PNGs to originals");
+        Console.WriteLine("    pic repack-png <dir>   Test repack PNG outputs directly to new");
         Console.WriteLine("    pic export-game <game> <work>");
         Console.WriteLine("                           Extract + sort + convert all picture arcs");
         Console.WriteLine();
@@ -132,6 +167,18 @@ public static class KaguyaApp
         Console.WriteLine("    link pack6 <indir> <out.arc>");
         Console.WriteLine("    link repack6 <indir> <manifest.json> <out.arc>");
         Console.WriteLine("    link verify <in.arc>   Validate chunk layout");
+        Console.WriteLine();
+        Console.WriteLine("  PE commands:");
+        Console.WriteLine("    pe string-dump <in.exe> <out.json>");
+        Console.WriteLine("                           Dump TBLSTR EXE strings and pointer refs");
+        Console.WriteLine("    pe string-import <in.exe> <strings.json> <out.exe>");
+        Console.WriteLine("                           Add translated string section and patch refs");
+        Console.WriteLine();
+        Console.WriteLine("  Unified archive commands:");
+        Console.WriteLine("    archive_unpack <in.arc> <outdir>");
+        Console.WriteLine("                           Auto-detect AF01 or LINK archive");
+        Console.WriteLine("    archive_pack <indir> <manifest.json> <out.arc>");
+        Console.WriteLine("                           Repack from _archive_manifest.json or _link_manifest.json");
         Console.WriteLine();
     }
 

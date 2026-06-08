@@ -19,8 +19,6 @@
 //
 // 依赖: BitmapHelpers, PicturePathHelper, System.Drawing
 // ============================================================================
-using System.Drawing;
-
 namespace Kaguya_YaneKit.Formats.Picture.Handlers;
 
 public sealed class Ap0Handler : IFormatHandler
@@ -70,24 +68,24 @@ public sealed class Ap0Handler : IFormatHandler
             bgra[j + 3] = 255;
         }
 
-        BitmapHelpers.SavePngFromBottomUpPixels(bgra, (int)metadata.Width, (int)metadata.Height, Path.ChangeExtension(destPath, ".png"));
+        BitmapHelpers.SavePngFromBottomUpPixels(bgra, (int)metadata.Width, (int)metadata.Height, PicturePathHelper.ChangeExtensionPreservingName(destPath, ".png"));
         return metadata;
     }
 
     public void Repack(string sourcePath, string destFile)
     {
         var pngPath = sourcePath + ".png";
-        var jsonPath = PicturePathHelper.GetMetadataPathForSource(sourcePath);
+        var jsonPath = PicturePathHelper.GetMetadataPathForSource(pngPath);
         if (!File.Exists(pngPath)) throw new FileNotFoundException($"Missing PNG for repack: {pngPath}");
         if (!File.Exists(jsonPath)) throw new FileNotFoundException($"Missing JSON metadata for repack: {jsonPath}");
 
         var metadata = System.Text.Json.JsonSerializer.Deserialize<Metadata>(File.ReadAllText(jsonPath)) ?? throw new InvalidDataException("Failed to parse JSON metadata.");
-        using var image = Image.FromFile(pngPath);
+        var bgra = BitmapHelpers.ReadBottomUpPixelsFromImage(pngPath, out var width, out var height);
         using var stream = File.Create(destFile);
         using var writer = new BinaryWriter(stream);
         writer.Write(0x302D5041);
-        writer.Write((uint)image.Width);
-        writer.Write((uint)image.Height);
-        writer.Write(BitmapHelpers.ToGrayscale(BitmapHelpers.ReadBottomUpPixelsFromImage(pngPath)));
+        writer.Write((uint)width);
+        writer.Write((uint)height);
+        writer.Write(BitmapHelpers.ToGrayscale(bgra));
     }
 }

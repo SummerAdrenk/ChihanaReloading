@@ -6,6 +6,7 @@
 //   sort                    -- 按文件格式签名分拣到子目录
 //   convert                 -- 将原始格式 (AP/AP2/AP3/ANM/BMP) 转换为 PNG
 //   repack                  -- 将修改后的 PNG 重新打包为原始格式
+//   repack-png              -- 测试入口: 直接将 png/ 中的 PNG 重新打包到 new/
 //   repack-fix              -- 对单个 fix 目录执行重打包
 //   restore                 -- 将 new/ 中的文件按元数据还原到输出目录
 //   restore-with-replenish  -- 还原 + 补充未修改的原始文件
@@ -45,9 +46,13 @@ public static class PictureCommands
         {
             return args[0].Trim().ToLowerInvariant() switch
             {
+                "--help" => Help(),
+                "-h" => Help(),
+                "help" => Help(),
                 "sort" => Sort(args),
                 "convert" => Convert(args),
                 "repack" => Repack(args),
+                "repack-png" => RepackPng(args),
                 "repack-fix" => RepackFix(args),
                 "restore" => Restore(args),
                 "restore-with-replenish" => RestoreWithReplenish(args),
@@ -104,6 +109,19 @@ public static class PictureCommands
         return 0;
     }
 
+    private static int RepackPng(string[] args)
+    {
+        if (args.Length != 2)
+        {
+            PrintHelp();
+            return 1;
+        }
+
+        FileConverter.RepackPngAll(args[1]);
+        Console.WriteLine($"Repacked PNG source files in {args[1]}");
+        return 0;
+    }
+
     private static int RepackFix(string[] args)
     {
         if (args.Length != 2)
@@ -124,7 +142,8 @@ public static class PictureCommands
             return 1;
         }
 
-        Restorer.Restore(args[1], args[2]);
+        var summary = Restorer.Restore(args[1], args[2]);
+        Console.WriteLine($"Restore done: {FormatRestoreSummary(summary)}");
         return 0;
     }
 
@@ -145,8 +164,14 @@ public static class PictureCommands
                 .ToHashSet();
         }
 
-        Restorer.RestoreWithReplenish(args[1], args[2], exclude);
+        var summary = Restorer.RestoreWithReplenish(args[1], args[2], exclude);
+        Console.WriteLine($"Restore with replenish done: {FormatRestoreSummary(summary)}");
         return 0;
+    }
+
+    private static string FormatRestoreSummary(Restorer.RestoreSummary summary)
+    {
+        return $"{summary.Copied}/{summary.Total} copied, {summary.Restored} restored, {summary.Replenished} replenished, {summary.Skipped} skipped, {summary.Failed} failed";
     }
 
     // 一键流水线: 遍历 params 安装表中的图片档案, 逐个解包 -> 分拣 -> 转换
@@ -213,8 +238,16 @@ public static class PictureCommands
         return name == "scr" ||
                name == "bgm" ||
                name == "sed" ||
-               name.StartsWith("voice");
+               name == "se" ||
+               name == "wav" ||
+               name.StartsWith("voice") ||
+               IsVoiceArchiveName(name);
     }
+
+    private static bool IsVoiceArchiveName(string name) =>
+        name.Length > 2 &&
+        name.StartsWith("vo", StringComparison.OrdinalIgnoreCase) &&
+        name.Skip(2).All(char.IsDigit);
 
     private static int Unknown(string command)
     {
@@ -223,12 +256,19 @@ public static class PictureCommands
         return 1;
     }
 
+    private static int Help()
+    {
+        PrintHelp();
+        return 0;
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("pic commands:");
         Console.WriteLine("  pic sort <source-dir> <work-dir>");
         Console.WriteLine("  pic convert <work-dir>");
         Console.WriteLine("  pic repack <work-dir>");
+        Console.WriteLine("  pic repack-png <work-dir>");
         Console.WriteLine("  pic repack-fix <fix-dir>");
         Console.WriteLine("  pic restore <work-dir> <output-dir>");
         Console.WriteLine("  pic restore-with-replenish <work-dir> <output-dir> [-exclude bmp,ap2]");

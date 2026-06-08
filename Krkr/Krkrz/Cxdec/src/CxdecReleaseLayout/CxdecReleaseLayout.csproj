@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ProjectGuid>{CE54255D-D575-47A8-8D0F-1346FB200121}</ProjectGuid>
+    <CxdecRoot>$(MSBuildThisFileDirectory)..\..\</CxdecRoot>
+    <ReleaseLayoutDir>$(CxdecRoot)Release\</ReleaseLayoutDir>
+    <TemplateRoot>$(CxdecRoot)resources\</TemplateRoot>
+    <OutputPath>$(MSBuildThisFileDirectory)obj\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CxdecReloading\CxdecReloading.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\krkr_hxv4_dumphash\krkr_hxv4_dumphash.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\KrkrExtractForCxdecV2\CxdecExtractor\CxdecExtractor.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\KrkrExtractForCxdecV2\CxdecExtractorLoader\CxdecExtractorLoader.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\KrkrExtractForCxdecV2\CxdecExtractorUI\CxdecExtractorUI.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\KrkrExtractForCxdecV2\CxdecStringDumper\CxdecStringDumper.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Locale-Emulator-Core\LoaderDll\LoaderDll.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Locale-Emulator-Core\LocaleEmulator\LocaleEmulator.vcxproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\FreeMote\FreeMote.Tools.PsbDecompile\FreeMote.Tools.PsbDecompile.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\FreeMote\FreeMote.Tools.PsBuild\FreeMote.Tools.PsBuild.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="LayoutRelease" AfterTargets="Build">
+    <ItemGroup>
+      <TemplateFile Include="$(TemplateRoot)**\*.*" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(TemplateFile)"
+          DestinationFiles="@(TemplateFile->'$(ReleaseLayoutDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          Condition="!Exists('$(ReleaseLayoutDir)%(TemplateFile.RecursiveDir)%(TemplateFile.Filename)%(TemplateFile.Extension)')" />
+  </Target>
+</Project>

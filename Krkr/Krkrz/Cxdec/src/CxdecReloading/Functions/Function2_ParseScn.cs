@@ -736,6 +736,7 @@ public static class Function2_ParseScn
     private static readonly Regex EvPrefixPattern = new(@"^ev(cg|cgx|ed)\d+", RegexOptions.Compiled);
     private static readonly Regex CgEdPattern = new(@"^(cg|cgx|ed)\d+", RegexOptions.Compiled);
     private static readonly Regex FileRefRegex = new(@"""([^""\\]*\.[a-zA-Z0-9]{1,6})""", RegexOptions.Compiled);
+    private const string RegexDictPrefix = "regex:";
 
     private static Task GenerateFileDictAsync(PipelineContext ctx)
     {
@@ -787,10 +788,13 @@ public static class Function2_ParseScn
 
         // Step 4: 版本变体
         var enableSteamVersionMatch = ConsoleHelper.AskYesNo("是否开启 Steam 版本匹配（这将会耗时特别长）？", defaultYes: false);
-        // var versionExpanded = ExpandVersionedNames(scnRefs);
-        var versionExpanded = ExpandVersionedNames(scnRefs, enableSteamVersionMatch);
-        scnRefs.UnionWith(versionExpanded);
+        var versionPatterns = GenerateVersionRegexPatterns(scnRefs, enableSteamVersionMatch);
+        scnRefs.UnionWith(versionPatterns);
         ConsoleHelper.PrintInfo($"  + 衍生 & 版本变体后: {scnRefs.Count} 个");
+
+        var normalVersionPatterns = GenerateVersionRegexPatterns(normalFiles, enableSteamVersionMatch);
+        if (normalVersionPatterns.Count > 0)
+            ConsoleHelper.PrintInfo($"  normaldict 版本变体: {normalVersionPatterns.Count} 条规则");
 
         // Step 5: 枚举模式
         var enumerated = GenerateEnumerationPatterns();
@@ -822,12 +826,18 @@ public static class Function2_ParseScn
         //    JsonSerializer.Serialize(newDict, new JsonSerializerOptions { WriteIndented = true }),
         //    new UTF8Encoding(false));
 
+        var allFiles = new HashSet<string>(normalFiles, StringComparer.OrdinalIgnoreCase);
+        allFiles.UnionWith(normalVersionPatterns);
+        allFiles.UnionWith(newNames);
+
+        if (!ValidateRegexDictEntries(allFiles, "files") ||
+            !ValidateRegexDictEntries(normalDirs, "dirs"))
+            return Task.CompletedTask;
+
         WriteNewDictJson(ctx.NewDictPath, newNames);
         ConsoleHelper.PrintSuccess($"newdict.json 已生成（{newNames.Count} 候选）");
 
         // Step 7: files.txt / dirs.txt（UTF-16LE BOM，供 krkr_hxv4_hash.py 使用）
-        var allFiles = new HashSet<string>(normalFiles, StringComparer.OrdinalIgnoreCase);
-        allFiles.UnionWith(newNames);
 
         //WriteUtf16LeList(ctx.FilesListPath, allFiles.Order());
         //WriteUtf16LeList(ctx.DirsListPath, normalDirs.Order());
@@ -1097,27 +1107,294 @@ public static class Function2_ParseScn
         return suffixes.ToArray();
     }
 
-    // private static HashSet<string> ExpandVersionedNames(HashSet<string> names)
-    private static HashSet<string> ExpandVersionedNames(HashSet<string> names, bool includeSteamVersionSuffixes)
+    private static HashSet<string> GenerateVersionRegexPatterns(HashSet<string> names, bool includeSteamVersionSuffixes)
     {
-        var expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var patterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var versionPattern = includeSteamVersionSuffixes ? SteamVersionPattern : DefaultVersionPattern;
-        var versionSuffixes = GenerateVersionSuffixes(includeSteamVersionSuffixes);
+        var suffixPattern = includeSteamVersionSuffixes
+            ? @"_([1-9]|[1-9][0-9]|[a-z]{1,2}|[a-z][1-9]|[1-9][a-z])"
+            : @"_[1-9a-z]";
+
         foreach (var name in names)
         {
-            // var match = VersionPattern.Match(name);
+            if (IsRegexDictEntry(name)) continue;
+
             var match = versionPattern.Match(name);
             if (!match.Success) continue;
 
             var basePart = match.Groups[1].Value;
             var ext = match.Groups[3].Value;
 
-            // foreach (var suffix in VersionSuffixes)
-            //     expanded.Add($"{basePart}{suffix}{ext}");
-            foreach (var suffix in versionSuffixes)
-                expanded.Add($"{basePart}{suffix}{ext}");
+            patterns.Add($"{RegexDictPrefix}^{Regex.Escape(basePart)}{suffixPattern}{Regex.Escape(ext)}$");
         }
-        return expanded;
+        return patterns;
+    }
+
+    // Per-regex safety limit. This is not the old enumeration size; it prevents user-authored regex rules from exploding.
+    private const long RegexExpansionLimit = 10_000;
+
+    private static bool ValidateRegexDictEntries(IEnumerable<string> entries, string label)
+    {
+        var errors = new List<string>();
+        var regexCount = 0;
+
+        foreach (var entry in entries)
+        {
+            if (!IsRegexDictEntry(entry)) continue;
+            regexCount++;
+
+            var pattern = entry[RegexDictPrefix.Length..];
+            if (!FiniteRegexCounter.TryCount(pattern, RegexExpansionLimit, out var count, out var error))
+            {
+                errors.Add($"{entry}: {error}");
+                continue;
+            }
+
+            if (count > RegexExpansionLimit)
+                errors.Add($"{entry}: 展开数量 {count} 超过上限 {RegexExpansionLimit}");
+        }
+
+        if (errors.Count == 0)
+        {
+            if (regexCount > 0)
+                ConsoleHelper.PrintInfo($"  {label} 正则校验通过: {regexCount} 条");
+            return true;
+        }
+
+        ConsoleHelper.PrintError($"{label} 中存在无法用于撞库展开的正则规则，已停止生成字典");
+        foreach (var error in errors.Take(20))
+            ConsoleHelper.PrintHint($"  {error}");
+        if (errors.Count > 20)
+            ConsoleHelper.PrintHint($"  ... 还有 {errors.Count - 20} 条");
+        return false;
+    }
+
+    private sealed class FiniteRegexCounter
+    {
+        private readonly string _pattern;
+        private readonly long _limit;
+        private int _pos;
+        private string? _error;
+
+        private FiniteRegexCounter(string pattern, long limit)
+        {
+            _pattern = pattern;
+            _limit = limit;
+        }
+
+        public static bool TryCount(string pattern, long limit, out long count, out string error)
+        {
+            var parser = new FiniteRegexCounter(pattern, limit);
+            count = parser.ParseExpression();
+            if (parser._error == null && parser._pos != pattern.Length)
+                parser.Fail($"无法解析位置 {parser._pos} 附近的字符 '{pattern[parser._pos]}'");
+
+            error = parser._error ?? "";
+            return parser._error == null;
+        }
+
+        private long ParseExpression()
+        {
+            var total = 0L;
+            while (_error == null)
+            {
+                total = AddCapped(total, ParseSequence());
+                if (_pos >= _pattern.Length || _pattern[_pos] != '|') break;
+                _pos++;
+            }
+            return total;
+        }
+
+        private long ParseSequence()
+        {
+            var total = 1L;
+            while (_error == null &&
+                   _pos < _pattern.Length &&
+                   _pattern[_pos] != ')' &&
+                   _pattern[_pos] != '|')
+            {
+                if (_pattern[_pos] is '^' or '$')
+                {
+                    _pos++;
+                    continue;
+                }
+
+                total = MultiplyCapped(total, ParseQuantifier(ParseAtom()));
+            }
+            return total;
+        }
+
+        private long ParseAtom()
+        {
+            if (_pos >= _pattern.Length)
+                return Fail("正则意外结束");
+
+            var ch = _pattern[_pos++];
+            if (ch == '(')
+            {
+                var count = ParseExpression();
+                if (_error != null) return count;
+                if (_pos >= _pattern.Length || _pattern[_pos] != ')')
+                    return Fail("缺少右括号 ')'");
+                _pos++;
+                return count;
+            }
+
+            if (ch == '[')
+            {
+                if (_pos < _pattern.Length && _pattern[_pos] == '^')
+                    return Fail("不支持反向字符组 [^...]");
+
+                var count = 0L;
+                while (_error == null && _pos < _pattern.Length && _pattern[_pos] != ']')
+                {
+                    var first = ReadClassChar();
+                    if (_error != null) break;
+
+                    if (_pos + 1 < _pattern.Length && _pattern[_pos] == '-' && _pattern[_pos + 1] != ']')
+                    {
+                        _pos++;
+                        var last = ReadClassChar();
+                        if (_error != null) break;
+                        if (first > last)
+                            return Fail("字符组范围起点大于终点");
+                        count = AddCapped(count, last - first + 1);
+                    }
+                    else
+                    {
+                        count = AddCapped(count, 1);
+                    }
+                }
+
+                if (_pos >= _pattern.Length || _pattern[_pos] != ']')
+                    return Fail("缺少右方括号 ']'");
+                _pos++;
+                return count;
+            }
+
+            if (ch == '\\')
+            {
+                if (_pos >= _pattern.Length)
+                    return Fail("反斜杠后缺少转义字符");
+
+                var escaped = _pattern[_pos++];
+                return escaped switch
+                {
+                    'd' => 10,
+                    'w' => 63,
+                    _ => 1,
+                };
+            }
+
+            if (ch is '.' or '*' or '+')
+                return Fail($"不支持无限或通配正则字符 '{ch}'");
+
+            return 1;
+        }
+
+        private long ParseQuantifier(long atomCount)
+        {
+            if (_error != null || _pos >= _pattern.Length) return atomCount;
+
+            if (_pattern[_pos] == '?')
+            {
+                _pos++;
+                return AddCapped(1, atomCount);
+            }
+
+            if (_pattern[_pos] != '{') return atomCount;
+
+            _pos++;
+            var min = ParseNumber();
+            var max = min;
+            if (_error != null) return atomCount;
+
+            if (_pos < _pattern.Length && _pattern[_pos] == ',')
+            {
+                _pos++;
+                max = ParseNumber();
+            }
+
+            if (_error != null) return atomCount;
+            if (_pos >= _pattern.Length || _pattern[_pos] != '}')
+                return Fail("缺少右花括号 '}'");
+            if (max < min)
+                return Fail("重复次数上限小于下限");
+
+            _pos++;
+
+            var total = 0L;
+            for (var i = min; i <= max; i++)
+                total = AddCapped(total, PowCapped(atomCount, i));
+            return total;
+        }
+
+        private int ParseNumber()
+        {
+            if (_pos >= _pattern.Length || !char.IsDigit(_pattern[_pos]))
+            {
+                Fail("重复次数必须是数字");
+                return 0;
+            }
+
+            var value = 0;
+            while (_pos < _pattern.Length && char.IsDigit(_pattern[_pos]))
+            {
+                value = value * 10 + (_pattern[_pos] - '0');
+                _pos++;
+            }
+            return value;
+        }
+
+        private char ReadClassChar()
+        {
+            if (_pos >= _pattern.Length)
+            {
+                Fail("字符组意外结束");
+                return '\0';
+            }
+
+            if (_pattern[_pos] == '\\')
+            {
+                _pos++;
+                if (_pos >= _pattern.Length)
+                {
+                    Fail("字符组内反斜杠后缺少转义字符");
+                    return '\0';
+                }
+            }
+
+            return _pattern[_pos++];
+        }
+
+        private long AddCapped(long a, long b)
+        {
+            if (a > _limit || b > _limit || a > _limit + 1 - b)
+                return _limit + 1;
+            return a + b;
+        }
+
+        private long MultiplyCapped(long a, long b)
+        {
+            if (a == 0 || b == 0) return 0;
+            if (a > _limit || b > _limit || a > (_limit + 1) / b)
+                return _limit + 1;
+            return a * b;
+        }
+
+        private long PowCapped(long value, int exponent)
+        {
+            var result = 1L;
+            for (var i = 0; i < exponent; i++)
+                result = MultiplyCapped(result, value);
+            return result;
+        }
+
+        private long Fail(string message)
+        {
+            _error ??= message;
+            return 0;
+        }
     }
 
     private static void WriteNewDictJson(string path, IEnumerable<string> files)
@@ -1159,102 +1436,35 @@ public static class Function2_ParseScn
     private static HashSet<string> GenerateEnumerationPatterns()
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // 角色语音
         var charIds = new List<string>();
         foreach (var (prefix, start, end) in new[] { ('a', 1, 10), ('b', 21, 30), ('c', 41, 43) })
             for (var i = start; i <= end; i++)
                 charIds.Add($"{prefix}{i:D3}");
 
+        names.Add($"{RegexDictPrefix}^(a00[1-9]|a010|b02[1-9]|b030|c04[1-3])_bgv_(aegi|fera)_(chu|jyaku|kyou)[1-3]\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^(a00[1-9]|a010|b02[1-9]|b030|c04[1-3])_bgv_jigo_[1-2]\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^(a00[1-9]|a010|b02[1-9]|b030|c04[1-3])_dokofera01\\.ogg(\\.sli)?$");
         foreach (var cid in charIds)
-        {
-            foreach (var bgvType in new[] { "aegi", "fera" })
-                foreach (var sub in new[] { "chu", "jyaku", "kyou" })
-                    for (var v = 1; v <= 3; v++)
-                    {
-                        names.Add($"{cid}_bgv_{bgvType}_{sub}{v}.ogg");
-                        names.Add($"{cid}_bgv_{bgvType}_{sub}{v}.ogg.sli");
-                    }
-
-            for (var v = 1; v <= 2; v++)
-            {
-                names.Add($"{cid}_bgv_jigo_{v}.ogg");
-                names.Add($"{cid}_bgv_jigo_{v}.ogg.sli");
-            }
-            names.Add($"{cid}_dokofera01.ogg");
-            names.Add($"{cid}_dokofera01.ogg.sli");
-
-            for (var num = 1; num <= 3000; num++)
-            {
-                names.Add($"{cid}_{num:D5}.ogg");
-                names.Add($"{cid}_{num:D5}.ogg.sli");
-            }
-        }
-
-        // bgm
-        for (var i = 1; i < 100; i++)
-        {
-            names.Add($"bgm{i:D2}.ogg");
-            names.Add($"bgm{i:D2}.ogg.sli");
-        }
-
-        // sys 音效
-        foreach (var n in new[] { "sys_back", "sys_info", "sys_over", "sys_push" })
-        {
-            names.Add($"{n}.ogg");
-            names.Add($"{n}.ogg.sli");
-            for (var i = 1; i <= 10; i++)
-            {
-                names.Add($"{n}_{i}.ogg");
-                names.Add($"{n}_{i}.ogg.sli");
-            }
-        }
-
-        // brand / title
-        foreach (var n in new[] { "brand", "title" })
-        {
-            names.Add($"{n}.ogg");
-            names.Add($"{n}.ogg.sli");
-            for (var i = 1; i <= 10; i++)
-            {
-                names.Add($"{n}_{i}.ogg");
-                names.Add($"{n}_{i}.ogg.sli");
-            }
-        }
-        foreach (var pfx in new[] { "title_a", "title_b", "title_c" })
-            for (var i = 0; i < 100; i++)
-            {
-                names.Add($"{pfx}{i:D3}.ogg");
-                names.Add($"{pfx}{i:D3}.ogg.sli");
-            }
-
-        // cha*_up.pimg
+            names.Add($"{RegexDictPrefix}^{cid}_(0000[1-9]|000[1-9][0-9]|00[1-9][0-9]{{2}}|0[1-2][0-9]{{3}}|03000)\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^bgm(0[1-9]|[1-9][0-9])\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^(sys_back|sys_info|sys_over|sys_push)(_([1-9]|10))?\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^(brand|title)(_([1-9]|10))?\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^title_[abc]0[0-9]{{2}}\\.ogg(\\.sli)?$");
+        names.Add($"{RegexDictPrefix}^cha(00[1-9]|0[1-9][0-9]|1[0-9]{{2}})_up\\.pimg$");
+        names.Add($"{RegexDictPrefix}^thum_cg(00[1-9]|0[1-9][0-9])_[0-9]{{2}}\\.png$");
+        names.Add($"{RegexDictPrefix}^thum_cg1[0-9]{{2}}_[0-9]{{2}}\\.png$");
         for (var i = 1; i < 200; i++)
-            names.Add($"cha{i:D3}_up.pimg");
-
-        // thum_cg*.png
-        for (var i = 1; i < 200; i++)
-            for (var j = 0; j < 100; j++)
-                names.Add($"thum_cg{i:D3}_{j:D2}.png");
-
-        // ev_cg*.l2d（含后缀字母变体）
-        for (var i = 1; i < 200; i++)
-            for (var j = 0; j < 100; j++)
-            {
-                names.Add($"ev_cg{i:D3}_{j:D2}.l2d");
-                foreach (var s in "sabcdefgh")
-                    names.Add($"ev_cg{i:D3}_{j:D2}{s}.l2d");
-            }
-
-        // 硬编码
+            names.Add($"{RegexDictPrefix}^ev_cg{i:D3}_[0-9]{{2}}[sabcdefgh]?\\.l2d$");
         names.Add("skill_main.mpg");
         names.Add("skill_mam.mpg");
         names.Add("stuff.mpg");
-
         return names;
     }
 
     // ========== .dref → dpak 引用提取 ==========
+
+    private static bool IsRegexDictEntry(string value) =>
+        value.StartsWith(RegexDictPrefix, StringComparison.OrdinalIgnoreCase);
 
     internal static HashSet<string> ExtractDrefReferences(string dumpDir)
     {

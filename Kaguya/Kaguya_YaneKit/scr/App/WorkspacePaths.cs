@@ -7,10 +7,11 @@
 //   ├── analysis/
 //   │   ├── params/          -- params.dat 导出的 JSON
 //   │   ├── scr/             -- 从 scr.arc 解包的 .scr 二进制
-//   │   ├── scr_disasm/      -- 反汇编后的 .disasm.txt
+//   │   ├── scr_hls/         -- 默认高级解析后的 .hls.txt
+//   │   ├── scr_disasm/      -- 低级 SCRASM 反汇编后的 .disasm.txt
 //   │   └── scr_asm/         -- 重新汇编后的 .scr 二进制
-//   ├── link6_unpack/        -- LINK6 档案解包输出
-//   ├── link6_pack/          -- LINK6 档案打包输入
+//   ├── archive_unpack/      -- 档案解包输出
+//   ├── archive_pack/        -- 档案打包输入
 //   ├── pic/                 -- 图片分拣/转换/重打包的工作区
 //   ├── character/           -- CG/立绘合成输出
 //   └── msg/                 -- message.dat 导出/拆分
@@ -27,8 +28,10 @@ public sealed class WorkspacePaths
     public string Root { get; }
     public string AnalysisParams { get; }
     public string AnalysisScr { get; }
+    public string AnalysisScrHls { get; }
     public string AnalysisScrDisasm { get; }
     public string AnalysisScrAsm { get; }
+    public string AnalysisPe { get; }
     public string Link6Unpack { get; }
     public string Link6Pack { get; }
     public string Pic { get; }
@@ -41,28 +44,28 @@ public sealed class WorkspacePaths
         Root = Path.GetFullPath(workDirectory);
         AnalysisParams = Path.Combine(Root, "analysis", "params");
         AnalysisScr = Path.Combine(Root, "analysis", "scr");
+        AnalysisScrHls = Path.Combine(Root, "analysis", "scr_hls");
         AnalysisScrDisasm = Path.Combine(Root, "analysis", "scr_disasm");
         AnalysisScrAsm = Path.Combine(Root, "analysis", "scr_asm");
-        Link6Unpack = Path.Combine(Root, "link6_unpack");
-        Link6Pack = Path.Combine(Root, "link6_pack");
+        AnalysisPe = Path.Combine(Root, "analysis", "pe");
+        Link6Unpack = Path.Combine(Root, "archive_unpack");
+        Link6Pack = Path.Combine(Root, "archive_pack");
         Pic = Path.Combine(Root, "pic");
         Character = Path.Combine(Root, "character");
         Msg = Path.Combine(Root, "msg");
         MsgSplitOut = Path.Combine(Root, "msg", "_split_out");
     }
 
-    // 确保所有工作子目录存在
+    // 只确保工作根目录存在；功能子目录由对应命令在写入时按需创建。
     public void EnsureDirectories()
     {
-        Directory.CreateDirectory(AnalysisParams);
-        Directory.CreateDirectory(AnalysisScr);
-        Directory.CreateDirectory(AnalysisScrDisasm);
-        Directory.CreateDirectory(AnalysisScrAsm);
+        Directory.CreateDirectory(Root);
+    }
+
+    public void EnsureArchiveDirectories()
+    {
         Directory.CreateDirectory(Link6Unpack);
         Directory.CreateDirectory(Link6Pack);
-        Directory.CreateDirectory(Pic);
-        Directory.CreateDirectory(Character);
-        Directory.CreateDirectory(Msg);
     }
 
     // 将绝对路径转为以工作目录为根的相对路径用于控制台显示

@@ -1,0 +1,10 @@
+<Project>
+  <Target Name="CxdecPruneReleaseSymbols"
+          AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release' And $([System.String]::Copy('$(TargetDir)').Contains('\Release\scr\'))">
+    <ItemGroup>
+      <CxdecReleaseNoise Include="$(TargetDir)*.pdb;$(TargetDir)*.xml" />
+    </ItemGroup>
+    <Delete Files="@(CxdecReleaseNoise)" />
+  </Target>
+</Project>

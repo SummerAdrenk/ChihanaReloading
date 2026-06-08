@@ -2,7 +2,7 @@
 // AnmHandler.cs
 // ANM 动画精灵格式处理器 (IFormatHandler 实现)
 //
-// 格式识别: 魔数 "AN00" / "AN10" / "AN20" / "AN21" (ASCII, 文件头 4 字节)
+// 格式识别: 魔数 "AN00" / "AN01" / "AN20" / "AN21" (ASCII, 文件头 4 字节)
 //
 // 转换 (Convert):
 //   调用 ArcANM.Extract 将 ANM 文件解包为多帧 PNG 到目标目录
@@ -30,8 +30,8 @@ public sealed class AnmHandler : IFormatHandler
         public uint CanvasHeight { get; set; }
         public int CanvasOffsetX { get; set; }
         public int CanvasOffsetY { get; set; }
-        public string? StructurePrefixBase64 { get; set; }
-        public int? GlobalChannels { get; set; }
+        public AnmAnimationControlInfo? AnimationControl { get; set; }
+        public int? GlobalPixelChannels { get; set; }
         public int? GlobalCompressionMode { get; set; }
         public List<AnmFrameInfo> Frames { get; set; } = [];
     }
@@ -41,7 +41,7 @@ public sealed class AnmHandler : IFormatHandler
         if (reader.BaseStream.Length < 4) return false;
         reader.BaseStream.Position = 0;
         var signature = Encoding.ASCII.GetString(reader.ReadBytes(4));
-        return signature is "AN00" or "AN10" or "AN20" or "AN21";
+        return signature is "AN00" or "AN01" or "AN20" or "AN21";
     }
 
     public object Convert(string sourceFile, string destPath)
@@ -55,8 +55,8 @@ public sealed class AnmHandler : IFormatHandler
             CanvasHeight = canvasInfo.Height,
             CanvasOffsetX = canvasInfo.OffsetX,
             CanvasOffsetY = canvasInfo.OffsetY,
-            StructurePrefixBase64 = canvasInfo.StructurePrefixBase64,
-            GlobalChannels = canvasInfo.GlobalChannels,
+            AnimationControl = canvasInfo.AnimationControl,
+            GlobalPixelChannels = canvasInfo.GlobalPixelChannels,
             GlobalCompressionMode = canvasInfo.GlobalCompressionMode,
             Frames = canvasInfo.Frames
         };
@@ -78,8 +78,8 @@ public sealed class AnmHandler : IFormatHandler
             Height = metadata.CanvasHeight,
             OffsetX = metadata.CanvasOffsetX,
             OffsetY = metadata.CanvasOffsetY,
-            StructurePrefixBase64 = metadata.StructurePrefixBase64,
-            GlobalChannels = metadata.GlobalChannels,
+            AnimationControl = metadata.AnimationControl,
+            GlobalPixelChannels = metadata.GlobalPixelChannels,
             GlobalCompressionMode = metadata.GlobalCompressionMode,
             Frames = metadata.Frames
         });

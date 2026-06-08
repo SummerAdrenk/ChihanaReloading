@@ -21,7 +21,14 @@ internal static class BitmapHelpers
 {
     public static byte[] ReadBottomUpPixelsFromImage(string filePath)
     {
+        return ReadBottomUpPixelsFromImage(filePath, out _, out _);
+    }
+
+    public static byte[] ReadBottomUpPixelsFromImage(string filePath, out int width, out int height)
+    {
         using var bmp = new Bitmap(filePath);
+        width = bmp.Width;
+        height = bmp.Height;
         if (bmp.PixelFormat == PixelFormat.Format32bppArgb)
         {
             return GetBottomUpPixels(bmp);

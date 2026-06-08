@@ -8,6 +8,7 @@
 // ============================================================================
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
 using Kaguya_YaneKit.Formats.Params;
 
@@ -16,14 +17,14 @@ namespace Kaguya_YaneKit.Gui;
 internal sealed class SpViewerApp : Application
 {
     private readonly string _picDir;
-    private readonly ParamsDatDocument? _params;
+    private readonly SpViewerSource _source;
     private readonly int _canvasWidth;
     private readonly int _canvasHeight;
 
-    public SpViewerApp(string picDir, ParamsDatDocument? paramsDocument, int canvasWidth, int canvasHeight)
+    public SpViewerApp(string picDir, SpViewerSource source, int canvasWidth, int canvasHeight)
     {
         _picDir = picDir;
-        _params = paramsDocument;
+        _source = source;
         _canvasWidth = canvasWidth;
         _canvasHeight = canvasHeight;
     }
@@ -31,23 +32,27 @@ internal sealed class SpViewerApp : Application
     public override void Initialize()
     {
         Styles.Add(new FluentTheme());
+        RequestedThemeVariant = ThemeVariant.Dark;
     }
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new SpViewerWindow(_picDir, _params, _canvasWidth, _canvasHeight);
+            desktop.MainWindow = new SpViewerWindow(_picDir, _source, _canvasWidth, _canvasHeight);
         }
 
         base.OnFrameworkInitializationCompleted();
     }
 
     public static void Launch(string picDir, ParamsDatDocument? paramsDocument, int canvasWidth, int canvasHeight)
+        => Launch(picDir, SpViewerSource.FromParams(paramsDocument), canvasWidth, canvasHeight);
+
+    public static void Launch(string picDir, SpViewerSource source, int canvasWidth, int canvasHeight)
     {
         var thread = new Thread(() =>
         {
-            var builder = AppBuilder.Configure(() => new SpViewerApp(picDir, paramsDocument, canvasWidth, canvasHeight))
+            var builder = AppBuilder.Configure(() => new SpViewerApp(picDir, source, canvasWidth, canvasHeight))
                 .UsePlatformDetect()
                 .LogToTrace();
             builder.StartWithClassicDesktopLifetime(Array.Empty<string>());
@@ -56,4 +61,13 @@ internal sealed class SpViewerApp : Application
         thread.Start();
         thread.Join();
     }
+}
+
+internal sealed record SpViewerSource(ParamsDatDocument? ParamsDocument, string? TblstrScrDirectory)
+{
+    public static SpViewerSource FromParams(ParamsDatDocument? paramsDocument) =>
+        new(paramsDocument, null);
+
+    public static SpViewerSource FromTblstrScr(string scrDirectory) =>
+        new(null, scrDirectory);
 }

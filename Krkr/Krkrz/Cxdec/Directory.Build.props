@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <CxdecRoot>$(MSBuildThisFileDirectory)</CxdecRoot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'CxdecReloading'">
+    <OutputPath>$(CxdecRoot)Release\scr\CxdecReloading\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'FreeMote' Or '$(MSBuildProjectName)' == 'FreeMote.Psb' Or '$(MSBuildProjectName)' == 'FreeMote.PsBuild' Or '$(MSBuildProjectName)' == 'FreeMote.Tools.PsbDecompile' Or '$(MSBuildProjectName)' == 'FreeMote.Tools.PsBuild'">
+    <OutputPath>$(CxdecRoot)Release\scr\FreeMote\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+</Project>

@@ -20,18 +20,18 @@
 //   --xor-key        XOR 加密密钥 (十六进制)
 //   --no-workflow    跳过工作流变换 (长度修正/占位符替换等)
 //
-// 工作流变换 (MessageWorkflowProcessor):
+// 工作流变换 (MessageDatWorkflowProcessor):
 //   导出时: 占位符替换, 文本标准化
 //   导入时: 占位符还原, 长度修正, 生成 message_fix.txt 预览
 //
 // 依赖: Message.MessageDatCodec, Message.MessageTextCodec,
-//        Message.MessageScriptLinker, Message.MessageWorkflowProcessor,
+//        Message.MessageScriptLinker, Message.MessageDatWorkflowProcessor,
 //        Message.MessagePlaceholderConfig
 // ============================================================================
 
 using System.Text;
-using Kaguya_YaneKit.Message;
-using Kaguya_YaneKit.Message.Model;
+using Kaguya_YaneKit.Text.MessageDat;
+using Kaguya_YaneKit.Text.MessageDat.Model;
 
 namespace Kaguya_YaneKit.App;
 
@@ -76,11 +76,22 @@ public static class MessageCommands
         }
 
         var context = CreateContext(args);
+        var input = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(input))
+        {
+            var document3 = CreateVer3Codec(context).Read(input);
+            var text3 = new MessageVer3TextCodec().Write(document3);
+            File.WriteAllText(args[2], text3, Encoding.UTF8);
+            Console.WriteLine($"Wrote {args[2]}");
+            PrintVer3Summary(document3);
+            return 0;
+        }
+
         var codec = context.Codec;
-        var document = codec.Read(File.ReadAllBytes(args[1]));
+        var document = codec.Read(input);
         if (!HasFlag(args, "--no-workflow"))
         {
-            new MessageWorkflowProcessor(context.Config).ApplyExportTransforms(document);
+            new MessageDatWorkflowProcessor(context.Config).ApplyExportTransforms(document);
         }
         var text = new MessageTextCodec().Write(document);
         File.WriteAllText(args[2], text, Encoding.UTF8);
@@ -99,9 +110,23 @@ public static class MessageCommands
         }
 
         var context = CreateContext(args);
+        var input = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(input))
+        {
+            var codec3 = CreateVer3Codec(context);
+            var document3 = codec3.Read(input);
+            new MessageVer3TextCodec().Apply(document3, File.ReadAllText(args[2], Encoding.UTF8));
+            var encrypt3 = ReadEncryptOption(args, context.Config.EncryptEnabled ?? document3.Encrypted);
+            var key3 = ReadKeyOption(args, context.Config.EncryptKey ?? document3.XorKey);
+            File.WriteAllBytes(args[3], codec3.Write(document3, encrypt3, key3));
+            Console.WriteLine($"Wrote {args[3]}");
+            PrintVer3Summary(document3);
+            return 0;
+        }
+
         var codec = context.Codec;
-        var document = codec.Read(File.ReadAllBytes(args[1]));
-        var workflow = new MessageWorkflowProcessor(context.Config);
+        var document = codec.Read(input);
+        var workflow = new MessageDatWorkflowProcessor(context.Config);
         if (!HasFlag(args, "--no-workflow"))
         {
             workflow.ApplyPreImportTransforms(document);
@@ -128,9 +153,23 @@ public static class MessageCommands
             return 1;
         }
 
-        var codec = CreateContext(args).Codec;
+        var context = CreateContext(args);
+        var codec = context.Codec;
         var original = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(original))
+        {
+            var codec3 = CreateVer3Codec(context);
+            var document3 = codec3.Read(original);
+            var rebuilt3 = codec3.Write(document3, document3.Encrypted, document3.XorKey);
+            var equal3 = original.SequenceEqual(rebuilt3);
+            Console.WriteLine(equal3
+                ? $"message.dat ver{document3.Version} verify OK: byte-for-byte roundtrip matched."
+                : $"message.dat ver{document3.Version} verify FAILED: original={original.Length}, rebuilt={rebuilt3.Length}.");
+            return equal3 ? 0 : 2;
+        }
+
         var document = codec.Read(original);
+        PrintFormat();
         var rebuilt = codec.Write(document, document.Encrypted, document.XorKey);
         var equal = original.SequenceEqual(rebuilt);
         Console.WriteLine(equal
@@ -147,8 +186,29 @@ public static class MessageCommands
             return 1;
         }
 
-        var codec = CreateContext(args).Codec;
-        var document = codec.Read(File.ReadAllBytes(args[1]));
+        var context = CreateContext(args);
+        var input = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(input))
+        {
+            var document3 = CreateVer3Codec(context).Read(input);
+            PrintVer3Summary(document3);
+            Console.WriteLine();
+            var shown = Math.Min(document3.Blocks.Count, 200);
+            for (var i = 0; i < shown; i++)
+            {
+                var block = document3.Blocks[i];
+                Console.WriteLine($"Block[{i:D4}] format={block.FormatName} items={block.Items.Count}");
+            }
+            if (shown < document3.Blocks.Count)
+            {
+                Console.WriteLine($"... omitted {document3.Blocks.Count - shown} blocks");
+            }
+
+            return 0;
+        }
+
+        var codec = context.Codec;
+        var document = codec.Read(input);
         PrintSummary(document);
         Console.WriteLine();
         for (var i = 0; i < document.Commands.Count; i++)
@@ -171,10 +231,27 @@ public static class MessageCommands
 
         var context = CreateContext(args);
         var codec = context.Codec;
-        var document = codec.Read(File.ReadAllBytes(args[1]));
+        var input = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(input))
+        {
+            var document3 = CreateVer3Codec(context).Read(input);
+            PrintVer3Format(document3);
+            var linker3 = new MessageVer3ScriptLinker();
+            var map3 = linker3.BuildMap(document3, args[2]);
+            linker3.WriteMapJson(map3, args[3]);
+            Console.WriteLine($"Wrote {args[3]}");
+            Console.WriteLine($"Scripts: {map3.Scripts.Count}");
+            Console.WriteLine($"Referenced blocks: {map3.ReferencedBlockCount}/{map3.BlockCount}");
+            Console.WriteLine($"Shared blocks: {map3.SharedBlockIndices.Count}");
+            Console.WriteLine($"Orphan blocks: {map3.OrphanBlockIndices.Count}");
+            return 0;
+        }
+
+        var document = codec.Read(input);
+        PrintFormat();
         if (!HasFlag(args, "--no-workflow"))
         {
-            new MessageWorkflowProcessor(context.Config).ApplyExportTransforms(document);
+            new MessageDatWorkflowProcessor(context.Config).ApplyExportTransforms(document);
         }
         var linker = new MessageScriptLinker();
         var map = linker.BuildMap(document, args[2]);
@@ -196,10 +273,30 @@ public static class MessageCommands
 
         var context = CreateContext(args);
         var codec = context.Codec;
-        var document = codec.Read(File.ReadAllBytes(args[1]));
+        var input = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(input))
+        {
+            var document3 = CreateVer3Codec(context).Read(input);
+            PrintVer3Format(document3);
+            var linker3 = new MessageVer3ScriptLinker();
+            var map3 = linker3.BuildMap(document3, args[2]);
+            Directory.CreateDirectory(args[3]);
+            linker3.Split(document3, map3, args[3]);
+            linker3.WriteMapJson(map3, Path.Combine(args[3], "_map.json"));
+            File.WriteAllText(Path.Combine(args[3], "_base_message_ver3.txt"), new MessageVer3TextCodec().Write(document3), Encoding.UTF8);
+            Console.WriteLine($"Wrote split files to {args[3]}");
+            Console.WriteLine($"Scripts: {map3.Scripts.Count}");
+            Console.WriteLine($"Referenced blocks: {map3.ReferencedBlockCount}/{map3.BlockCount}");
+            Console.WriteLine($"Shared blocks: {map3.SharedBlockIndices.Count}");
+            Console.WriteLine($"Orphan blocks: {map3.OrphanBlockIndices.Count}");
+            return 0;
+        }
+
+        var document = codec.Read(input);
+        PrintFormat();
         if (!HasFlag(args, "--no-workflow"))
         {
-            new MessageWorkflowProcessor(context.Config).ApplyExportTransforms(document);
+            new MessageDatWorkflowProcessor(context.Config).ApplyExportTransforms(document);
         }
         var linker = new MessageScriptLinker();
         var map = linker.BuildMap(document, args[2]);
@@ -239,10 +336,27 @@ public static class MessageCommands
             return 1;
         }
 
-        var codec = CreateContext(args).Codec;
+        var context = CreateContext(args);
+        var codec = context.Codec;
         var textCodec = new MessageTextCodec();
         var original = File.ReadAllBytes(args[1]);
+        if (MessageVer3DatCodec.IsLegacyVersion(original))
+        {
+            var codec3 = CreateVer3Codec(context);
+            var textCodec3 = new MessageVer3TextCodec();
+            var document3 = codec3.Read(original);
+            var text3 = textCodec3.Write(document3);
+            textCodec3.Apply(document3, text3);
+            var rebuilt3 = codec3.Write(document3, document3.Encrypted, document3.XorKey);
+            var equal3 = original.SequenceEqual(rebuilt3);
+            Console.WriteLine(equal3
+                ? $"message.dat ver{document3.Version} text verify OK: binary -> text -> binary matched."
+                : $"message.dat ver{document3.Version} text verify FAILED: original={original.Length}, rebuilt={rebuilt3.Length}.");
+            return equal3 ? 0 : 2;
+        }
+
         var document = codec.Read(original);
+        PrintFormat();
         var text = textCodec.Write(document);
         textCodec.Apply(document, text);
         var rebuilt = codec.Write(document, document.Encrypted, document.XorKey);
@@ -270,8 +384,12 @@ public static class MessageCommands
         return new MessageCommandContext(
             new MessageDatCodec(readEncoding, writeEncoding, placeholders),
             placeholders,
+            readEncoding,
             writeEncoding);
     }
+
+    private static MessageVer3DatCodec CreateVer3Codec(MessageCommandContext context) =>
+        new(context.ReadEncoding, context.WriteEncoding, context.Config);
 
     private static bool ReadEncryptOption(string[] args, bool fallback)
     {
@@ -304,6 +422,7 @@ public static class MessageCommands
 
     private static void PrintSummary(MessageDatDocument document)
     {
+        PrintFormat();
         Console.WriteLine($"Encrypted: {document.Encrypted}");
         Console.WriteLine($"XorKey: 0x{document.XorKey:X2}");
         Console.WriteLine($"Names: {document.Names.Count}");
@@ -311,6 +430,28 @@ public static class MessageCommands
         Console.WriteLine($"Messages: {document.Messages.Count}");
         Console.WriteLine($"Commands: {document.Commands.Count}");
         Console.WriteLine($"RawTail: {document.RawTail.Length} bytes");
+    }
+
+    private static void PrintVer3Summary(MessageVer3Document document)
+    {
+        var itemCount = document.Blocks.Sum(block => block.Items.Count);
+        var voiceCount = document.Blocks.Sum(block => block.Items.Sum(item => item.Voices.Count));
+        PrintVer3Format(document);
+        Console.WriteLine($"Encrypted: {document.Encrypted} (flag=0x{document.EncryptionFlag:X2})");
+        Console.WriteLine($"XorKey: 0x{document.XorKey:X2}");
+        Console.WriteLine($"Blocks: {document.Blocks.Count}");
+        Console.WriteLine($"Items: {itemCount}");
+        Console.WriteLine($"Voices: {voiceCount}");
+    }
+
+    private static void PrintFormat()
+    {
+        Console.WriteLine($"Format: {MessageDatDocument.Magic}");
+    }
+
+    private static void PrintVer3Format(MessageVer3Document document)
+    {
+        Console.WriteLine($"Format: [SCR-MESSAGE]ver{document.Version}");
     }
 
     private static int Unknown(string command)
@@ -492,5 +633,9 @@ public static class MessageCommands
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    private sealed record MessageCommandContext(MessageDatCodec Codec, MessagePlaceholderConfig Config, Encoding WriteEncoding);
+    private sealed record MessageCommandContext(
+        MessageDatCodec Codec,
+        MessagePlaceholderConfig Config,
+        Encoding ReadEncoding,
+        Encoding WriteEncoding);
 }

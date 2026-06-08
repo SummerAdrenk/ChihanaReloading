@@ -25,104 +25,208 @@ public static class Restorer
         public string OriginalRelativePath { get; set; } = "";
     }
 
-    public static void Restore(string workDir, string outputDir)
+    public readonly record struct RestoreSummary(int Total, int Restored, int Replenished, int Skipped, int Failed)
     {
-        workDir = Path.GetFullPath(workDir);
-        outputDir = Path.GetFullPath(outputDir);
-        Directory.CreateDirectory(outputDir);
-        RestoreFromNewFolders(workDir, outputDir);
+        public int Copied => Restored + Replenished;
     }
 
-    public static void RestoreWithReplenish(string workDir, string outputDir, HashSet<string>? excludeFormats = null)
+    private sealed class RestoreProgress
+    {
+        private readonly Action<int, int>? _progress;
+        private int _done;
+        private int _restored;
+        private int _replenished;
+        private int _skipped;
+        private int _failed;
+
+        public RestoreProgress(int total, Action<int, int>? progress)
+        {
+            Total = total;
+            _progress = progress;
+            _progress?.Invoke(0, Total);
+        }
+
+        public int Total { get; }
+        public void MarkRestored() => Interlocked.Increment(ref _restored);
+
+        public void MarkReplenished() => Interlocked.Increment(ref _replenished);
+
+        public void MarkSkipped() => Interlocked.Increment(ref _skipped);
+
+        public void MarkFailed() => Interlocked.Increment(ref _failed);
+
+        public void Advance()
+        {
+            var done = Interlocked.Increment(ref _done);
+            _progress?.Invoke(done, Total);
+        }
+
+        public RestoreSummary ToSummary() => new(
+            Total,
+            Volatile.Read(ref _restored),
+            Volatile.Read(ref _replenished),
+            Volatile.Read(ref _skipped),
+            Volatile.Read(ref _failed));
+    }
+
+    private static readonly ParallelOptions RestoreParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = ReadRestoreParallelism()
+    };
+
+    public static RestoreSummary Restore(string workDir, string outputDir, Action<int, int>? progress = null)
     {
         workDir = Path.GetFullPath(workDir);
         outputDir = Path.GetFullPath(outputDir);
         Directory.CreateDirectory(outputDir);
-        RestoreFromNewFolders(workDir, outputDir);
+        var files = EnumerateNamedDirFiles(workDir, "new", null).ToList();
+        var restoreProgress = new RestoreProgress(files.Count, progress);
+        RestoreFromNewFolders(files, outputDir, restoreProgress);
+        return restoreProgress.ToSummary();
+    }
 
-        var origDirs = Directory.EnumerateDirectories(workDir, "orig", SearchOption.AllDirectories);
-        foreach (var origDir in origDirs)
+    public static RestoreSummary RestoreWithReplenish(string workDir, string outputDir, HashSet<string>? excludeFormats = null, Action<int, int>? progress = null)
+    {
+        workDir = Path.GetFullPath(workDir);
+        outputDir = Path.GetFullPath(outputDir);
+        Directory.CreateDirectory(outputDir);
+        var newFiles = EnumerateNamedDirFiles(workDir, "new", null).ToList();
+        var origFiles = EnumerateNamedDirFiles(workDir, "orig", excludeFormats).ToList();
+        var restoreProgress = new RestoreProgress(newFiles.Count + origFiles.Count, progress);
+        RestoreFromNewFolders(newFiles, outputDir, restoreProgress);
+
+        Parallel.ForEach(origFiles, RestoreParallelOptions, origFile =>
         {
-            var formatDir = new DirectoryInfo(origDir).Parent!.FullName;
-            var formatTag = new DirectoryInfo(formatDir).Name;
-            if (excludeFormats != null && excludeFormats.Contains(formatTag.ToLowerInvariant()))
+            try
             {
-                continue;
-            }
-
-            var metaDir = Path.Combine(formatDir, "metadata");
-            foreach (var origFile in Directory.EnumerateFiles(origDir, "*.*", SearchOption.AllDirectories))
-            {
-                var relPath = Path.GetRelativePath(origDir, origFile);
-                var jsonFile = formatTag.Equals("anm", StringComparison.OrdinalIgnoreCase)
-                    ? Path.Combine(metaDir, relPath + ".json")
-                    : Path.Combine(metaDir, Path.ChangeExtension(relPath, ".json"));
+                var (formatDir, formatTag, relPath, jsonFile) = ResolveMetadataPath(origFile.RootDir, origFile.FilePath);
 
                 if (!File.Exists(jsonFile))
                 {
-                    continue;
+                    throw new FileNotFoundException($"Metadata not found for replenish source: {relPath}", jsonFile);
                 }
 
                 var json = File.ReadAllText(jsonFile);
                 var metadata = JsonSerializer.Deserialize<BaseMetadata>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (metadata == null || string.IsNullOrEmpty(metadata.OriginalRelativePath))
                 {
-                    continue;
+                    restoreProgress.MarkSkipped();
+                    return;
                 }
 
                 var destFile = Path.Combine(outputDir, metadata.OriginalRelativePath);
                 if (!File.Exists(destFile))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                    File.Copy(origFile, destFile, false);
+                    try
+                    {
+                        File.Copy(origFile.FilePath, destFile, false);
+                        restoreProgress.MarkReplenished();
+                    }
+                    catch (IOException) when (File.Exists(destFile))
+                    {
+                        restoreProgress.MarkSkipped();
+                    }
                 }
+                else
+                {
+                    restoreProgress.MarkSkipped();
+                }
+            }
+            catch (Exception ex)
+            {
+                restoreProgress.MarkFailed();
+                PictureProcessing.WriteLine($"Failed to replenish \"{Path.GetFileName(origFile.FilePath)}\": {ex.Message}");
+            }
+            finally
+            {
+                restoreProgress.Advance();
+            }
+        });
+
+        return restoreProgress.ToSummary();
+    }
+
+    private readonly record struct RestoreSourceFile(string RootDir, string FilePath);
+
+    private static IEnumerable<RestoreSourceFile> EnumerateNamedDirFiles(string workDir, string dirName, HashSet<string>? excludeFormats)
+    {
+        foreach (var dir in Directory.EnumerateDirectories(workDir, dirName, SearchOption.AllDirectories))
+        {
+            var formatDir = new DirectoryInfo(dir).Parent!.FullName;
+            var formatTag = new DirectoryInfo(formatDir).Name;
+            if (excludeFormats != null && excludeFormats.Contains(formatTag.ToLowerInvariant()))
+            {
+                continue;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories))
+            {
+                yield return new RestoreSourceFile(dir, file);
             }
         }
     }
 
-    private static void RestoreFromNewFolders(string workDir, string outputDir)
+    private static void RestoreFromNewFolders(IReadOnlyList<RestoreSourceFile> files, string outputDir, RestoreProgress restoreProgress)
     {
-        var newDirs = Directory.EnumerateDirectories(workDir, "new", SearchOption.AllDirectories);
-        foreach (var newDir in newDirs)
+        Parallel.ForEach(files, RestoreParallelOptions, source =>
         {
-            foreach (var file in Directory.EnumerateFiles(newDir, "*.*", SearchOption.AllDirectories))
+            try
             {
-                try
+                var (_, _, relPath, jsonFile) = ResolveMetadataPath(source.RootDir, source.FilePath);
+
+                if (!File.Exists(jsonFile))
                 {
-                    var formatDir = new DirectoryInfo(newDir).Parent!.FullName;
-                    var formatTag = new DirectoryInfo(formatDir).Name;
-                    var metaDir = Path.Combine(formatDir, "metadata");
-                    var relPath = Path.GetRelativePath(newDir, file);
-                    var jsonFile = formatTag.Equals("anm", StringComparison.OrdinalIgnoreCase)
-                        ? Path.Combine(metaDir, relPath + ".json")
-                        : Path.Combine(metaDir, Path.ChangeExtension(relPath, ".json"));
-
-                    if (!File.Exists(jsonFile))
-                    {
-                        Console.WriteLine($"  Warning: metadata not found for \"{relPath}\", copying to root.");
-                        var destFileDirect = Path.Combine(outputDir, relPath);
-                        Directory.CreateDirectory(Path.GetDirectoryName(destFileDirect)!);
-                        File.Copy(file, destFileDirect, true);
-                        continue;
-                    }
-
-                    var json = File.ReadAllText(jsonFile);
-                    var metadata = JsonSerializer.Deserialize<BaseMetadata>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (metadata == null || string.IsNullOrEmpty(metadata.OriginalRelativePath))
-                    {
-                        Console.WriteLine($"  Warning: invalid metadata for \"{relPath}\", skipped.");
-                        continue;
-                    }
-
-                    var destFile = Path.Combine(outputDir, metadata.OriginalRelativePath);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                    File.Copy(file, destFile, true);
+                    throw new FileNotFoundException($"Metadata not found for restore source: {relPath}", jsonFile);
                 }
-                catch (Exception ex)
+
+                var json = File.ReadAllText(jsonFile);
+                var metadata = JsonSerializer.Deserialize<BaseMetadata>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (metadata == null || string.IsNullOrEmpty(metadata.OriginalRelativePath))
                 {
-                    Console.WriteLine($"  Failed to restore \"{Path.GetFileName(file)}\": {ex.Message}");
+                    PictureProcessing.WriteLine($"Warning: invalid metadata for \"{relPath}\", skipped.");
+                    restoreProgress.MarkSkipped();
+                    return;
                 }
+
+                var destFile = Path.Combine(outputDir, metadata.OriginalRelativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+                File.Copy(source.FilePath, destFile, true);
+                restoreProgress.MarkRestored();
             }
+            catch (Exception ex)
+            {
+                restoreProgress.MarkFailed();
+                PictureProcessing.WriteLine($"Failed to restore \"{Path.GetFileName(source.FilePath)}\": {ex.Message}");
+            }
+            finally
+            {
+                restoreProgress.Advance();
+            }
+        });
+    }
+
+    private static int ReadRestoreParallelism()
+    {
+        var value = Environment.GetEnvironmentVariable("KAGUYA_RESTORE_PARALLELISM");
+        if (int.TryParse(value, out var parsed) && parsed > 0)
+        {
+            return Math.Clamp(parsed, 1, 16);
         }
+
+        return Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
+    }
+
+    private static (string FormatDir, string FormatTag, string RelPath, string JsonFile) ResolveMetadataPath(string rootDir, string file)
+    {
+        var formatDir = new DirectoryInfo(rootDir).Parent!.FullName;
+        var formatTag = new DirectoryInfo(formatDir).Name;
+        var metaDir = Path.Combine(formatDir, "metadata");
+        var relPath = Path.GetRelativePath(rootDir, file);
+        var jsonFile = formatTag.Equals("anm", StringComparison.OrdinalIgnoreCase) ||
+                       formatTag.Equals("plt", StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(metaDir, relPath + ".json")
+            : Path.Combine(metaDir, PicturePathHelper.ChangeExtensionPreservingName(relPath, ".json"));
+        return (formatDir, formatTag, relPath, jsonFile);
     }
 }

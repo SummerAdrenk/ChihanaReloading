@@ -3,28 +3,27 @@
 // SP 立绘查看器主窗口 (code-only Avalonia, 无 XAML)
 //
 // 布局:
-//   左侧面板 (ScrollViewer):
-//     角色列表 / 差分列表 (固定)
-//     Overlay (可折叠, 默认收起)
-//     Background (可折叠, 默认展开)
-//     Custom BG (可折叠, 用户选择文件夹, 按宽高比过滤, 路径持久化)
-//   中央: 预览画布 (缩放自适应)
-//   底部: 导出按钮 + 进度条
+//   左侧: Fluent 风格工作台, 包含角色/差分/叠加/背景选择卡片
+//   右侧: 大预览画布, 顶部信息栏, 底部导出和状态栏
 // ============================================================================
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Kaguya_YaneKit.Formats.Character;
 using Kaguya_YaneKit.Formats.Params;
+using AvBrushes = Avalonia.Media.Brushes;
 using AvBitmap = Avalonia.Media.Imaging.Bitmap;
 using SysBitmap = System.Drawing.Bitmap;
 using SysColor = System.Drawing.Color;
@@ -33,8 +32,23 @@ namespace Kaguya_YaneKit.Gui;
 
 internal sealed class SpViewerWindow : Window
 {
+    private IBrush WindowBrush => _isDarkTheme ? Brush(18, 18, 20) : Brush(246, 241, 229);
+    private IBrush SurfaceBrush => _isDarkTheme
+        ? (HasToolBackground ? Brush(232, 31, 31, 35) : Brush(31, 31, 35))
+        : (HasToolBackground ? Brush(236, 255, 251, 241) : Brush(255, 251, 241));
+    private IBrush SurfaceAltBrush => _isDarkTheme
+        ? (HasToolBackground ? Brush(224, 38, 38, 43) : Brush(38, 38, 43))
+        : (HasToolBackground ? Brush(228, 250, 244, 232) : Brush(250, 244, 232));
+    private IBrush PanelBrush => _isDarkTheme
+        ? (HasToolBackground ? Brush(226, 25, 25, 29) : Brush(25, 25, 29))
+        : (HasToolBackground ? Brush(232, 240, 233, 219) : Brush(240, 233, 219));
+    private IBrush BorderLineBrush => _isDarkTheme ? Brush(62, 62, 70) : Brush(222, 211, 193);
+    private IBrush TextBrush => _isDarkTheme ? AvBrushes.White : Brush(42, 37, 31);
+    private IBrush MutedTextBrush => _isDarkTheme ? Brush(166, 166, 174) : Brush(104, 91, 76);
+    private bool HasToolBackground => !string.IsNullOrEmpty(_toolBackgroundPath) && File.Exists(_toolBackgroundPath);
+
     private readonly string _picDir;
-    private readonly ParamsDatDocument? _params;
+    private readonly SpViewerSource _source;
     private readonly int _canvasWidth;
     private readonly int _canvasHeight;
 
@@ -43,6 +57,9 @@ internal sealed class SpViewerWindow : Window
     private readonly ListBox _overlayList;
     private readonly ListBox _backgroundList;
     private readonly ListBox _customBgList;
+    private readonly TextBox _variantSearchBox;
+    private readonly TextBox _backgroundSearchBox;
+    private readonly TextBox _customBgSearchBox;
     private readonly Button _customBgBrowseBtn;
     private readonly TextBlock _customBgPathText;
     private readonly Avalonia.Controls.Image _previewImage;
@@ -50,6 +67,17 @@ internal sealed class SpViewerWindow : Window
     private readonly ProgressBar _progressBar;
     private readonly Button _exportCurrentBtn;
     private readonly Button _exportAllBtn;
+    private readonly Button _themeToggleBtn;
+    private readonly Button _toolBgBrowseBtn;
+    private readonly Button _toolBgClearBtn;
+    private readonly List<Border> _surfaceCards = new();
+    private readonly List<Border> _surfaceAltCards = new();
+    private readonly List<Border> _panelCards = new();
+    private readonly List<TextBlock> _titleTexts = new();
+    private readonly List<TextBlock> _captionTexts = new();
+    private Grid? _rootLayer;
+    private Avalonia.Controls.Image? _toolBackgroundImage;
+    private Border? _toolBackgroundOverlay;
 
     private List<SpCharacterGroup> _characters = new();
     private List<SpExpressionEntry> _overlays = new();
@@ -57,38 +85,59 @@ internal sealed class SpViewerWindow : Window
     private List<SpBackgroundEntry> _customBgs = new();
     private bool _isExporting;
     private bool _suppressBgSync;
+    private bool _isDarkTheme = true;
+    private string? _toolBackgroundPath;
 
-    private string ConfigPath => Path.Combine(_picDir, "..", "sp_viewer_config.json");
+    private string ConfigRoot => Path.GetFullPath(Path.Combine(_picDir, ".."));
+    private string ConfigPath => Path.Combine(ConfigRoot, "config.json");
 
-    public SpViewerWindow(string picDir, ParamsDatDocument? paramsDocument, int canvasWidth, int canvasHeight)
+    public SpViewerWindow(string picDir, SpViewerSource source, int canvasWidth, int canvasHeight)
     {
         _picDir = Path.GetFullPath(picDir);
-        _params = paramsDocument;
+        _source = source;
         _canvasWidth = canvasWidth;
         _canvasHeight = canvasHeight;
 
-        Title = "SP Viewer";
-        Width = 1100;
-        Height = 750;
+        Title = "Kaguya SP Viewer";
+        Width = 1180;
+        Height = 780;
+        MinWidth = 980;
+        MinHeight = 640;
+        Background = WindowBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-        var borderBrush = new SolidColorBrush(Avalonia.Media.Color.FromRgb(80, 80, 80));
-
-        _characterList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 150 };
-        _expressionList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 200 };
+        _characterList = CreateListBox(120);
+        _expressionList = CreateListBox(145);
+        _variantSearchBox = new TextBox
+        {
+            Watermark = "Search variant...",
+            Margin = new Thickness(0, 0, 0, 7),
+            Padding = new Thickness(8, 4),
+            Background = SurfaceAltBrush,
+            Foreground = TextBrush,
+            BorderBrush = BorderLineBrush,
+            BorderThickness = new Thickness(1)
+        };
         _overlayList = new ListBox
         {
             SelectionMode = SelectionMode.Multiple | SelectionMode.Toggle,
-            BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 160
+            BorderBrush = BorderLineBrush, BorderThickness = new Thickness(1), MaxHeight = 110,
+            Background = SurfaceAltBrush, Foreground = TextBrush,
+            Padding = new Thickness(2),
+            ClipToBounds = true,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemTemplate = CreateListItemTemplate()
         };
-        _backgroundList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 160 };
-        _customBgList = new ListBox { BorderBrush = borderBrush, BorderThickness = new Thickness(1), MaxHeight = 160 };
-        _customBgBrowseBtn = new Button { Content = "Browse...", Margin = new Thickness(0, 2, 4, 2), Padding = new Thickness(8, 2) };
+        _backgroundList = CreateListBox(105);
+        _customBgList = CreateListBox(105);
+        _backgroundSearchBox = CreateSearchBox("Search background...");
+        _customBgSearchBox = CreateSearchBox("Search custom BG...");
+        _customBgBrowseBtn = new Button { Content = "Browse...", Margin = new Thickness(0, 2, 8, 2), Padding = new Thickness(10, 4) };
         _customBgPathText = new TextBlock
         {
             Text = "(no folder)",
             VerticalAlignment = VerticalAlignment.Center,
-            Opacity = 0.6,
+            Foreground = MutedTextBrush,
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 170
         };
@@ -101,8 +150,11 @@ internal sealed class SpViewerWindow : Window
         _statusText = new TextBlock
         {
             Text = "Loading...",
-            Margin = new Thickness(8, 0),
-            VerticalAlignment = VerticalAlignment.Center
+            Margin = new Thickness(2, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = MutedTextBrush,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap
         };
         _progressBar = new ProgressBar
         {
@@ -110,42 +162,143 @@ internal sealed class SpViewerWindow : Window
             IsIndeterminate = true, IsVisible = true,
             Margin = new Thickness(8, 0)
         };
-        _exportCurrentBtn = new Button { Content = "Export Current", Margin = new Thickness(4, 0), IsEnabled = false };
-        _exportAllBtn = new Button { Content = "Export All (Current Character)", Margin = new Thickness(4, 0), IsEnabled = false };
+        _exportCurrentBtn = new Button { Content = "Export Current", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(14, 6), IsEnabled = false };
+        _exportAllBtn = new Button { Content = "Export Character", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(14, 6), IsEnabled = false };
+        _themeToggleBtn = new Button { Content = "Light", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(12, 6) };
+        _toolBgBrowseBtn = new Button { Content = "Tool BG", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(12, 6) };
+        _toolBgClearBtn = new Button { Content = "Clear BG", Padding = new Thickness(12, 6), IsVisible = false };
 
+        LoadUiConfig();
+        ApplyThemeVariant();
+        UpdateChromeState();
+        RefreshControlTheme();
         Content = BuildLayout();
 
         _characterList.SelectionChanged += (_, _) => OnCharacterChanged();
         _expressionList.SelectionChanged += (_, _) => OnSelectionChanged();
+        _variantSearchBox.TextChanged += (_, _) => ApplyExpressionFilter(keepSelection: true);
         _overlayList.SelectionChanged += (_, _) => OnSelectionChanged();
+        _backgroundSearchBox.TextChanged += (_, _) => ApplyBackgroundFilter(keepSelection: true);
+        _customBgSearchBox.TextChanged += (_, _) => ApplyCustomBgFilter(keepSelection: true);
         _backgroundList.SelectionChanged += (_, _) => OnBuiltinBgChanged();
         _customBgList.SelectionChanged += (_, _) => OnCustomBgChanged();
         _customBgBrowseBtn.Click += (_, _) => BrowseCustomBgFolder();
         _exportCurrentBtn.Click += (_, _) => ExportCurrent();
         _exportAllBtn.Click += (_, _) => ExportAll();
+        _themeToggleBtn.Click += (_, _) => ToggleTheme();
+        _toolBgBrowseBtn.Click += (_, _) => BrowseToolBackground();
+        _toolBgClearBtn.Click += (_, _) => ClearToolBackground();
 
         Opened += (_, _) => Dispatcher.UIThread.Post(LoadData, DispatcherPriority.Background);
     }
 
+    // ─── Fluent-style helpers ────────────────────────────────────────
+
+    private static IBrush Brush(byte r, byte g, byte b) =>
+        new SolidColorBrush(Avalonia.Media.Color.FromRgb(r, g, b));
+
+    private static IBrush Brush(byte a, byte r, byte g, byte b) =>
+        new SolidColorBrush(Avalonia.Media.Color.FromArgb(a, r, g, b));
+
+    private ListBox CreateListBox(double maxHeight) => new()
+    {
+        BorderBrush = BorderLineBrush,
+        BorderThickness = new Thickness(1),
+        Background = SurfaceAltBrush,
+        Foreground = TextBrush,
+        MaxHeight = maxHeight,
+        Padding = new Thickness(2),
+        ClipToBounds = true,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        ItemTemplate = CreateListItemTemplate()
+    };
+
+    private IDataTemplate CreateListItemTemplate() =>
+        new FuncDataTemplate<object>((item, _) => new TextBlock
+        {
+            Text = item?.ToString() ?? string.Empty,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        });
+
+    private TextBox CreateSearchBox(string watermark) => new()
+    {
+        Watermark = watermark,
+        Margin = new Thickness(0, 0, 0, 7),
+        Padding = new Thickness(8, 4),
+        Background = SurfaceAltBrush,
+        Foreground = TextBrush,
+        BorderBrush = BorderLineBrush,
+        BorderThickness = new Thickness(1)
+    };
+
+    private Border CreateCard(Control content, Thickness? padding = null)
+    {
+        var card = new Border
+        {
+            Background = SurfaceBrush,
+            BorderBrush = BorderLineBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = padding ?? new Thickness(10),
+            ClipToBounds = true,
+            Child = content
+        };
+        _surfaceCards.Add(card);
+        return card;
+    }
+
+    private TextBlock CreateCaption(string text)
+    {
+        var caption = new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            Foreground = MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap
+        };
+        _captionTexts.Add(caption);
+        return caption;
+    }
+
+    private TextBlock CreateTitle(string text, double size = 16)
+    {
+        var title = new TextBlock
+        {
+            Text = text,
+            FontSize = size,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = TextBrush
+        };
+        _titleTexts.Add(title);
+        return title;
+    }
+
     // ─── Collapsible section builder ─────────────────────────────────
 
-    private static Control BuildCollapsibleSection(string label, Control content, bool startExpanded)
+    private Control BuildCollapsibleSection(string label, Control content, bool startExpanded)
     {
         var arrow = new TextBlock
         {
             Text = startExpanded ? "▼ " : "▶ ",
             FontWeight = FontWeight.Bold,
-            Margin = new Thickness(0, 6, 0, 2)
+            Foreground = MutedTextBrush,
+            VerticalAlignment = VerticalAlignment.Center
         };
+        _captionTexts.Add(arrow);
         var title = new TextBlock
         {
             Text = label,
-            FontWeight = FontWeight.Bold,
-            Margin = new Thickness(0, 6, 0, 2)
+            FontWeight = FontWeight.SemiBold,
+            Foreground = TextBrush,
+            VerticalAlignment = VerticalAlignment.Center
         };
+        _titleTexts.Add(title);
         var header = new StackPanel
         {
             Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 6),
             Children = { arrow, title },
             Cursor = new Cursor(StandardCursorType.Hand)
         };
@@ -157,68 +310,155 @@ internal sealed class SpViewerWindow : Window
             arrow.Text = content.IsVisible ? "▼ " : "▶ ";
         };
 
-        return new StackPanel { Children = { header, content } };
+        return CreateCard(new StackPanel
+        {
+            Children = { header, content }
+        }, new Thickness(9));
     }
 
     // ─── Layout ──────────────────────────────────────────────────────
 
     private Control BuildLayout()
     {
+        var header = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(22, 18, 22, 8)
+        };
+        var titleBlock = new StackPanel
+        {
+            Spacing = 2,
+            Children =
+            {
+                CreateTitle("Kaguya SP Viewer", 22),
+                CreateCaption(_picDir)
+            }
+        };
+        var canvasBadge = new Border
+        {
+            Background = SurfaceAltBrush,
+            BorderBrush = BorderLineBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 6),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = $"{_canvasWidth} x {_canvasHeight}",
+                Foreground = MutedTextBrush,
+                FontWeight = FontWeight.SemiBold
+            }
+        };
+        _surfaceAltCards.Add(canvasBadge);
+        if (canvasBadge.Child is TextBlock canvasText)
+            _captionTexts.Add(canvasText);
+        var headerActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { _themeToggleBtn, _toolBgBrowseBtn, _toolBgClearBtn, canvasBadge }
+        };
+        Grid.SetColumn(titleBlock, 0);
+        Grid.SetColumn(headerActions, 1);
+        header.Children.Add(titleBlock);
+        header.Children.Add(headerActions);
+
         var customBgToolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 2),
+            Margin = new Thickness(0, 2, 0, 8),
             Children = { _customBgBrowseBtn, _customBgPathText }
         };
-        var customBgContent = new StackPanel { Children = { customBgToolbar, _customBgList } };
+        var backgroundContent = new StackPanel { Children = { _backgroundSearchBox, _backgroundList } };
+        var customBgContent = new StackPanel { Children = { customBgToolbar, _customBgSearchBox, _customBgList } };
+        var variantContent = new StackPanel { Children = { _variantSearchBox, _expressionList } };
 
         var leftPanel = new StackPanel
         {
-            Margin = new Thickness(8),
+            Width = 372,
+            Spacing = 8,
             Children =
             {
+                CreateCard(new StackPanel
+                {
+                    Spacing = 3,
+                    Children =
+                    {
+                        CreateTitle("Workspace"),
+                        CreateCaption("Select character, layers, and background.")
+                    }
+                }, new Thickness(10)),
                 BuildCollapsibleSection("Character", _characterList, true),
-                BuildCollapsibleSection("Variant", _expressionList, true),
+                BuildCollapsibleSection("Variant", variantContent, true),
                 BuildCollapsibleSection("Overlay", _overlayList, false),
-                BuildCollapsibleSection("Background", _backgroundList, true),
+                BuildCollapsibleSection("Background", backgroundContent, false),
                 BuildCollapsibleSection("Custom BG", customBgContent, false)
             }
         };
 
         var leftScroll = new ScrollViewer
         {
-            Width = 270,
+            Width = 400,
             Content = leftPanel,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(14, 8, 10, 18)
         };
 
-        var sep1 = new TextBlock { Text = "|", Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Opacity = 0.5 };
-        var sep2 = new TextBlock { Text = "|", Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Opacity = 0.5 };
-        var bottomBar = new StackPanel
+        var actionButtons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Margin = new Thickness(8, 4),
-            Children = { _exportCurrentBtn, sep1, _exportAllBtn, sep2, _statusText }
+            Children = { _exportCurrentBtn, _exportAllBtn }
         };
-        var progressRow = new DockPanel
+        var statusRow = new Border
         {
-            Margin = new Thickness(8, 2),
-            LastChildFill = true,
-            Children = { _progressBar }
+            Background = SurfaceAltBrush,
+            BorderBrush = BorderLineBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 5),
+            Child = _statusText
+        };
+        _surfaceAltCards.Add(statusRow);
+
+        var progressRow = new Border
+        {
+            Background = SurfaceAltBrush,
+            BorderBrush = BorderLineBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 6),
+            Child = _progressBar
+        };
+        _surfaceAltCards.Add(progressRow);
+        var bottomPanel = new StackPanel
+        {
+            Spacing = 7,
+            Margin = new Thickness(0, 14, 0, 0),
+            Children = { actionButtons, statusRow, progressRow }
         };
         var previewBorder = new Border
         {
-            Background = new SolidColorBrush(Avalonia.Media.Color.FromRgb(32, 32, 32)),
+            Background = PanelBrush,
+            BorderBrush = BorderLineBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
             Margin = new Thickness(4),
             Child = _previewImage
         };
+        _panelCards.Add(previewBorder);
+        var previewViewport = new AspectRatioBox((double)_canvasWidth / _canvasHeight)
+        {
+            Child = previewBorder
+        };
 
-        var rightPanel = new DockPanel();
-        DockPanel.SetDock(progressRow, Dock.Bottom);
-        DockPanel.SetDock(bottomBar, Dock.Bottom);
-        rightPanel.Children.Add(progressRow);
-        rightPanel.Children.Add(bottomBar);
-        rightPanel.Children.Add(previewBorder);
+        var rightPanel = new DockPanel
+        {
+            Margin = new Thickness(10, 8, 18, 18)
+        };
+        DockPanel.SetDock(bottomPanel, Dock.Bottom);
+        rightPanel.Children.Add(bottomPanel);
+        rightPanel.Children.Add(previewViewport);
 
         var mainGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         Grid.SetColumn(leftScroll, 0);
@@ -226,7 +466,34 @@ internal sealed class SpViewerWindow : Window
         mainGrid.Children.Add(leftScroll);
         mainGrid.Children.Add(rightPanel);
 
-        return mainGrid;
+        var content = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*")
+        };
+        Grid.SetRow(header, 0);
+        Grid.SetRow(mainGrid, 1);
+        content.Children.Add(header);
+        content.Children.Add(mainGrid);
+
+        return BuildRootBackground(content);
+    }
+
+    private Control BuildRootBackground(Control content)
+    {
+        var root = new Grid { Background = WindowBrush };
+        _rootLayer = root;
+        _toolBackgroundImage = new Avalonia.Controls.Image
+        {
+            Stretch = Stretch.UniformToFill,
+            IsHitTestVisible = false
+        };
+        _toolBackgroundOverlay = new Border { IsHitTestVisible = false };
+
+        root.Children.Add(_toolBackgroundImage);
+        root.Children.Add(_toolBackgroundOverlay);
+        root.Children.Add(content);
+        UpdateRootBackground();
+        return root;
     }
 
     // ─── Data loading ────────────────────────────────────────────────
@@ -253,16 +520,33 @@ internal sealed class SpViewerWindow : Window
                 Dispatcher.UIThread.Post(() => _statusText.Text = "Scanning backgrounds...");
                 var backgrounds = BuildBackgroundList();
 
-                if (_params?.Pattern is not null)
+                if (_source.ParamsDocument?.Pattern is not null)
                 {
-                    Dispatcher.UIThread.Post(() => _statusText.Text = "Building SP plans...");
+                    Dispatcher.UIThread.Post(() => _statusText.Text = "Building Params SP plans...");
                     var usedStatic = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var usedAnimated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var result = new CharacterComposeResult();
 
                     var plans = CharacterComposer.BuildSpPlans(
-                        _params.Pattern, staticAssets, animatedAssets,
+                        _source.ParamsDocument.Pattern, staticAssets, animatedAssets,
                         usedStatic, usedAnimated, result).ToArray();
+
+                    (characters, overlays) = GroupPlansByCharacter(plans);
+                }
+                else if (!string.IsNullOrWhiteSpace(_source.TblstrScrDirectory) && Directory.Exists(_source.TblstrScrDirectory))
+                {
+                    Dispatcher.UIThread.Post(() => _statusText.Text = "Building TBLSTR SP plans...");
+                    var usedStatic = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var usedAnimated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var result = new CharacterComposeResult();
+
+                    var plans = TblstrSpPlanBuilder.BuildPlansFromScrDirectory(
+                        _source.TblstrScrDirectory,
+                        staticAssets,
+                        animatedAssets,
+                        usedStatic,
+                        usedAnimated,
+                        result);
 
                     (characters, overlays) = GroupPlansByCharacter(plans);
                 }
@@ -283,8 +567,8 @@ internal sealed class SpViewerWindow : Window
 
                     _characterList.ItemsSource = _characters;
                     _overlayList.ItemsSource = _overlays;
-                    _backgroundList.ItemsSource = _backgrounds;
-                    _customBgList.ItemsSource = _customBgs;
+                    ApplyBackgroundFilter();
+                    ApplyCustomBgFilter();
 
                     if (savedCustomBgFolder is not null)
                         _customBgPathText.Text = savedCustomBgFolder;
@@ -322,13 +606,96 @@ internal sealed class SpViewerWindow : Window
         if (_characterList.SelectedItem is not SpCharacterGroup group)
         {
             _expressionList.ItemsSource = null;
+            _previewImage.Source = null;
             return;
         }
 
-        _expressionList.ItemsSource = group.Expressions;
-        if (group.Expressions.Count > 0)
-            _expressionList.SelectedIndex = 0;
+        ApplyExpressionFilter();
     }
+
+    private void ApplyExpressionFilter(bool keepSelection = false)
+    {
+        if (_characterList.SelectedItem is not SpCharacterGroup group)
+        {
+            _expressionList.ItemsSource = null;
+            return;
+        }
+
+        var query = _variantSearchBox.Text?.Trim();
+        var source = group.Expressions.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            source = source.Where(entry => tokens.All(token => VariantMatches(entry, token)));
+        }
+
+        var filtered = source.ToList();
+        var previous = keepSelection ? _expressionList.SelectedItem as SpExpressionEntry : null;
+        _expressionList.ItemsSource = filtered;
+
+        if (previous is not null && filtered.Contains(previous))
+        {
+            _expressionList.SelectedItem = previous;
+        }
+        else if (filtered.Count > 0)
+        {
+            _expressionList.SelectedIndex = 0;
+        }
+        else
+        {
+            _expressionList.SelectedIndex = -1;
+            _previewImage.Source = null;
+            if (!string.IsNullOrWhiteSpace(query))
+                _statusText.Text = $"Variant search: 0/{group.Expressions.Count}";
+        }
+    }
+
+    private static bool VariantMatches(SpExpressionEntry entry, string token)
+    {
+        var indexText = entry.Index.ToString("D4");
+        return indexText.Contains(token, StringComparison.OrdinalIgnoreCase)
+               || entry.ToString().Contains(token, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ApplyBackgroundFilter(bool keepSelection = false)
+    {
+        var previous = keepSelection ? _backgroundList.SelectedItem as SpBackgroundEntry : null;
+        var filtered = FilterBackgrounds(_backgrounds, _backgroundSearchBox.Text, keepNone: true);
+        _backgroundList.ItemsSource = filtered;
+
+        if (previous is not null && filtered.Contains(previous))
+            _backgroundList.SelectedItem = previous;
+        else if (filtered.Count > 0)
+            _backgroundList.SelectedIndex = 0;
+        else
+            _backgroundList.SelectedIndex = -1;
+    }
+
+    private void ApplyCustomBgFilter(bool keepSelection = false)
+    {
+        var previous = keepSelection ? _customBgList.SelectedItem as SpBackgroundEntry : null;
+        var filtered = FilterBackgrounds(_customBgs, _customBgSearchBox.Text, keepNone: false);
+        _customBgList.ItemsSource = filtered;
+
+        if (previous is not null && filtered.Contains(previous))
+            _customBgList.SelectedItem = previous;
+        else
+            _customBgList.SelectedIndex = -1;
+    }
+
+    private static List<SpBackgroundEntry> FilterBackgrounds(IEnumerable<SpBackgroundEntry> entries, string? query, bool keepNone)
+    {
+        var tokens = query?.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        return entries
+            .Where(entry => (keepNone && string.IsNullOrEmpty(entry.PngPath)) ||
+                            tokens.Length == 0 ||
+                            tokens.All(token => BackgroundMatches(entry, token)))
+            .ToList();
+    }
+
+    private static bool BackgroundMatches(SpBackgroundEntry entry, string token) =>
+        entry.Name.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+        Path.GetFileName(entry.PngPath).Contains(token, StringComparison.OrdinalIgnoreCase);
 
     private void OnBuiltinBgChanged()
     {
@@ -467,8 +834,11 @@ internal sealed class SpViewerWindow : Window
         _exportAllBtn.IsEnabled = !exporting;
         _characterList.IsEnabled = !exporting;
         _expressionList.IsEnabled = !exporting;
+        _variantSearchBox.IsEnabled = !exporting;
         _overlayList.IsEnabled = !exporting;
+        _backgroundSearchBox.IsEnabled = !exporting;
         _backgroundList.IsEnabled = !exporting;
+        _customBgSearchBox.IsEnabled = !exporting;
         _customBgList.IsEnabled = !exporting;
     }
 
@@ -603,9 +973,14 @@ internal sealed class SpViewerWindow : Window
     {
         var list = new List<SpBackgroundEntry> { SpBackgroundEntry.None };
 
-        var backgroundDirs = new[] { "bgd", "BG" }
-            .Select(name => Path.Combine(_picDir, name))
-            .Where(Directory.Exists)
+        var archiveBackgroundDirs = Directory.Exists(_picDir)
+            ? Directory.GetDirectories(_picDir)
+                .Where(dir => Path.GetFileName(dir).StartsWith("bg", StringComparison.OrdinalIgnoreCase))
+            : Enumerable.Empty<string>();
+        var backgroundDirs = archiveBackgroundDirs
+            .Concat(new[] { "bgd", "BG" }
+                .Select(name => Path.Combine(_picDir, name))
+                .Where(Directory.Exists))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(d => d, StringComparer.OrdinalIgnoreCase);
 
@@ -620,11 +995,12 @@ internal sealed class SpViewerWindow : Window
                 foreach (var png in Directory.GetFiles(pngDir, "*.png", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
                 {
                     var name = Path.GetFileNameWithoutExtension(png);
-                    if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("BG", StringComparison.Ordinal))
+                    if (!string.IsNullOrWhiteSpace(name))
                     {
                         list.Add(new SpBackgroundEntry(name, png));
                         continue;
                     }
+
                     if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("ＢＧ"))
                     {
                         list.Add(new SpBackgroundEntry(name, png));
@@ -662,11 +1038,164 @@ internal sealed class SpViewerWindow : Window
             Dispatcher.UIThread.Post(() =>
             {
                 _customBgs = items;
-                _customBgList.ItemsSource = _customBgs;
+                ApplyCustomBgFilter();
                 _customBgPathText.Text = path;
                 _statusText.Text = $"Custom BG: {items.Count} images from {Path.GetFileName(path)}";
             });
         });
+    }
+
+    private void ToggleTheme()
+    {
+        _isDarkTheme = !_isDarkTheme;
+        ApplyThemeVariant();
+        UpdateChromeState();
+        SaveUiConfig();
+        RefreshTheme();
+    }
+
+    private async void BrowseToolBackground()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select Tool Background Image",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("Images")
+                {
+                    Patterns = ["*.png", "*.jpg", "*.jpeg", "*.bmp"]
+                }
+            ]
+        });
+
+        if (files.Count == 0) return;
+        var path = files[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+
+        _toolBackgroundPath = path;
+        UpdateChromeState();
+        SaveUiConfig();
+        RefreshTheme();
+        _statusText.Text = $"Tool BG: {Path.GetFileName(path)}";
+    }
+
+    private void ClearToolBackground()
+    {
+        _toolBackgroundPath = null;
+        UpdateChromeState();
+        SaveUiConfig();
+        RefreshTheme();
+        _statusText.Text = "Tool BG cleared.";
+    }
+
+    private void ApplyThemeVariant()
+    {
+        if (Application.Current is not null)
+        {
+            Application.Current.RequestedThemeVariant = _isDarkTheme
+                ? ThemeVariant.Dark
+                : ThemeVariant.Light;
+        }
+
+        Background = WindowBrush;
+    }
+
+    private void UpdateChromeState()
+    {
+        _themeToggleBtn.Content = _isDarkTheme ? "Light" : "Dark";
+        _toolBgClearBtn.IsVisible = HasToolBackground;
+    }
+
+    private void RefreshControlTheme()
+    {
+        foreach (var list in new[] { _characterList, _expressionList, _overlayList, _backgroundList, _customBgList })
+        {
+            list.BorderBrush = BorderLineBrush;
+            list.Background = SurfaceAltBrush;
+            list.Foreground = TextBrush;
+        }
+
+        foreach (var searchBox in new[] { _variantSearchBox, _backgroundSearchBox, _customBgSearchBox })
+        {
+            searchBox.BorderBrush = BorderLineBrush;
+            searchBox.Background = SurfaceAltBrush;
+            searchBox.Foreground = TextBrush;
+        }
+
+        foreach (var card in _surfaceCards)
+        {
+            card.Background = SurfaceBrush;
+            card.BorderBrush = BorderLineBrush;
+        }
+
+        foreach (var card in _surfaceAltCards)
+        {
+            card.Background = SurfaceAltBrush;
+            card.BorderBrush = BorderLineBrush;
+        }
+
+        foreach (var card in _panelCards)
+        {
+            card.Background = PanelBrush;
+            card.BorderBrush = BorderLineBrush;
+        }
+
+        foreach (var text in _titleTexts)
+            text.Foreground = TextBrush;
+
+        foreach (var text in _captionTexts)
+            text.Foreground = MutedTextBrush;
+
+        _customBgPathText.Foreground = MutedTextBrush;
+        _statusText.Foreground = MutedTextBrush;
+    }
+
+    private void RefreshTheme()
+    {
+        RefreshControlTheme();
+        UpdateRootBackground();
+    }
+
+    private void UpdateRootBackground()
+    {
+        if (_rootLayer is not null)
+        {
+            _rootLayer.Background = WindowBrush;
+        }
+
+        if (_toolBackgroundOverlay is not null)
+        {
+            _toolBackgroundOverlay.Background = HasToolBackground
+                ? (_isDarkTheme
+                    ? new SolidColorBrush(Avalonia.Media.Color.FromArgb(150, 18, 18, 20))
+                    : new SolidColorBrush(Avalonia.Media.Color.FromArgb(168, 246, 241, 229)))
+                : AvBrushes.Transparent;
+        }
+
+        if (_toolBackgroundImage is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(_toolBackgroundPath) && File.Exists(_toolBackgroundPath))
+        {
+            try
+            {
+                _toolBackgroundImage.Source = new AvBitmap(_toolBackgroundPath);
+                _toolBackgroundImage.Opacity = _isDarkTheme ? 0.42 : 0.34;
+                _toolBackgroundImage.IsVisible = true;
+                return;
+            }
+            catch
+            {
+                _toolBackgroundPath = null;
+                UpdateChromeState();
+            }
+        }
+
+        _toolBackgroundImage.Source = null;
+        _toolBackgroundImage.IsVisible = false;
     }
 
     private List<SpBackgroundEntry> ScanCustomBgFolder(string folderPath)
@@ -704,28 +1233,91 @@ internal sealed class SpViewerWindow : Window
 
     private string? LoadCustomBgFolder()
     {
-        try
-        {
-            if (!File.Exists(ConfigPath)) return null;
-            var json = File.ReadAllText(ConfigPath);
-            var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("CustomBgFolder", out var prop))
-                return prop.GetString();
-        }
-        catch { /* ignore */ }
-        return null;
+        var root = LoadConfigObject();
+        return GetString(root["SpViewer"]?["CustomBgFolder"]);
     }
 
     private void SaveCustomBgFolder(string folderPath)
     {
+        SaveUiConfig(customBgFolder: folderPath);
+    }
+
+    private void LoadUiConfig()
+    {
+        var root = LoadConfigObject();
+        _isDarkTheme = GetBool(root["Gui"]?["DarkTheme"])
+            ?? _isDarkTheme;
+        _toolBackgroundPath = GetString(root["Gui"]?["ToolBackgroundPath"]);
+    }
+
+    private void SaveUiConfig(string? customBgFolder = null)
+    {
         try
         {
-            var json = JsonSerializer.Serialize(new { CustomBgFolder = folderPath },
-                new JsonSerializerOptions { WriteIndented = true });
-            Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
-            File.WriteAllText(ConfigPath, json);
+            var root = LoadConfigObject();
+            var gui = GetOrCreateGroup(root, "Gui");
+            var spViewer = GetOrCreateGroup(root, "SpViewer");
+
+            gui["DarkTheme"] = _isDarkTheme;
+            gui["ToolBackgroundPath"] = _toolBackgroundPath;
+            spViewer["CustomBgFolder"] = customBgFolder
+                ?? GetString(spViewer["CustomBgFolder"]);
+
+            Directory.CreateDirectory(ConfigRoot);
+            File.WriteAllText(ConfigPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { /* ignore */ }
+    }
+
+    private JsonObject LoadConfigObject()
+    {
+        try
+        {
+            if (File.Exists(ConfigPath))
+                return JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject ?? [];
+        }
+        catch
+        {
+            // ignore invalid config and rebuild a clean one on save
+        }
+
+        return [];
+    }
+
+    private static JsonObject GetOrCreateGroup(JsonObject root, string name)
+    {
+        if (root[name] is JsonObject group)
+        {
+            return group;
+        }
+
+        group = [];
+        root[name] = group;
+        return group;
+    }
+
+    private static string? GetString(JsonNode? node)
+    {
+        try
+        {
+            return node?.GetValue<string>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool? GetBool(JsonNode? node)
+    {
+        try
+        {
+            return node?.GetValue<bool>();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ─── Grouping ────────────────────────────────────────────────────
@@ -765,7 +1357,9 @@ internal sealed class SpViewerWindow : Window
         foreach (var (plan, entry) in planEntries)
         {
             var label = plan.LabelParts.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
-            var charName = characterNames.FirstOrDefault(cn => label.StartsWith(cn));
+            var charName = !string.IsNullOrWhiteSpace(plan.CharacterHint)
+                ? plan.CharacterHint
+                : characterNames.FirstOrDefault(cn => label.StartsWith(cn));
             if (charName is null)
             {
                 overlays.Add(entry);
@@ -812,5 +1406,56 @@ internal sealed class SpViewerWindow : Window
         foreach (var c in Path.GetInvalidFileNameChars())
             name = name.Replace(c, '_');
         return name;
+    }
+}
+
+internal sealed class AspectRatioBox : Decorator
+{
+    private readonly double _aspectRatio;
+
+    public AspectRatioBox(double aspectRatio)
+    {
+        _aspectRatio = aspectRatio > 0 && !double.IsInfinity(aspectRatio) && !double.IsNaN(aspectRatio)
+            ? aspectRatio
+            : 16.0 / 9.0;
+    }
+
+    protected override Avalonia.Size MeasureOverride(Avalonia.Size availableSize)
+    {
+        var size = Fit(availableSize);
+        Child?.Measure(size);
+        return size;
+    }
+
+    protected override Avalonia.Size ArrangeOverride(Avalonia.Size finalSize)
+    {
+        var size = Fit(finalSize);
+        var x = Math.Max(0, (finalSize.Width - size.Width) / 2);
+        var y = Math.Max(0, (finalSize.Height - size.Height) / 2);
+        Child?.Arrange(new Rect(x, y, size.Width, size.Height));
+        return finalSize;
+    }
+
+    private Avalonia.Size Fit(Avalonia.Size bounds)
+    {
+        var width = bounds.Width;
+        var height = bounds.Height;
+
+        if (double.IsInfinity(width) && double.IsInfinity(height))
+            return new Avalonia.Size(640, 640 / _aspectRatio);
+
+        if (double.IsInfinity(width))
+            return new Avalonia.Size(height * _aspectRatio, height);
+
+        if (double.IsInfinity(height))
+            return new Avalonia.Size(width, width / _aspectRatio);
+
+        if (width <= 0 || height <= 0)
+            return new Avalonia.Size(0, 0);
+
+        var current = width / height;
+        return current > _aspectRatio
+            ? new Avalonia.Size(height * _aspectRatio, height)
+            : new Avalonia.Size(width, width / _aspectRatio);
     }
 }

@@ -16,7 +16,9 @@
 // 依赖: Formats.Archive.LinkArchiveCodec, Formats.Archive.LinkArchiveModels
 // ============================================================================
 
+using System.Diagnostics;
 using Kaguya_YaneKit.Formats.Archive;
+using Kaguya_YaneKit.Formats.Params;
 
 namespace Kaguya_YaneKit.App;
 
@@ -37,7 +39,7 @@ public static class LinkCommands
                 "list" => List(args),
                 "extract" => Extract(args, context),
                 "pack6" => Pack6(args),
-                "repack6" => Repack6(args),
+                "repack6" => Repack6(args, context),
                 "verify" => Verify(args),
                 _ => Unknown(args[0])
             };
@@ -79,10 +81,11 @@ public static class LinkCommands
         var paramsPath = GetOption(args, "--params");
         var decrypt = !HasFlag(args, "--no-decrypt") && !HasFlag(args, "--raw");
         var codec = new LinkArchiveCodec();
+        var stopwatch = Stopwatch.StartNew();
         codec.Extract(args[1], args[2], paramsPath ?? context?.ParamsPath, context?.LinkEncryptionKey, decrypt);
         using var stream = File.OpenRead(args[1]);
         var manifest = codec.ReadManifest(stream);
-        Console.WriteLine($"Extracted {manifest.Entries.Count} entries to {args[2]}");
+        Console.WriteLine($"Extracted {manifest.Entries.Count} entries to {args[2]} in {stopwatch.Elapsed.TotalSeconds:F2}s");
         if (decrypt && manifest.Entries.Any(entry => (entry.EntryFlags & 4) != 0))
         {
             Console.WriteLine($"Decrypted encrypted entries with {paramsPath ?? context?.ParamsPath ?? "params.dat"}");
@@ -113,15 +116,29 @@ public static class LinkCommands
         return 0;
     }
 
-    private static int Repack6(string[] args)
+    private static int Repack6(string[] args, KaguyaRuntimeContext? context)
     {
-        if (args.Length != 4)
+        if (args.Length < 4 || args.Length > 9 || !ValidateOptions(args, 4))
         {
             PrintHelp();
             return 1;
         }
 
-        new LinkArchiveCodec().PackLink6FromManifest(args[1], args[2], args[3]);
+        var compressPackedEntries = !HasFlag(args, "--no-compress") &&
+            (HasFlag(args, "--compress") || LinkManifestHasCompressedEntries(args[2]));
+        var encryptEncryptedEntries = !HasFlag(args, "--no-encrypt") &&
+            (HasFlag(args, "--encrypt") || HasFlag(args, "--keep-encryption-flags") || LinkManifestHasEncryptedEntries(args[2]));
+        var paramsPath = GetOption(args, "--params");
+        var key = encryptEncryptedEntries
+            ? paramsPath is not null ? ReadLinkEncryptionKey(paramsPath) : context?.LinkEncryptionKey ?? ReadLinkEncryptionKey(context?.ParamsPath)
+            : null;
+
+        new LinkArchiveCodec().PackLink6FromManifest(args[1], args[2], args[3], new LinkArchivePackOptions
+        {
+            CompressPackedEntries = compressPackedEntries,
+            EncryptEncryptedEntries = encryptEncryptedEntries,
+            EncryptionKey = key
+        });
         Console.WriteLine($"Wrote {args[3]}");
         return 0;
     }
@@ -197,7 +214,7 @@ public static class LinkCommands
         Console.WriteLine("  link extract <archive.arc> <output-dir> [--params params.dat] [--no-decrypt|--raw]");
         Console.WriteLine("  link verify <archive.arc>");
         Console.WriteLine("  link pack6 <input-dir> <output.arc> [--name archiveName] [--flags 0] [--recursive]");
-        Console.WriteLine("  link repack6 <input-dir> <_link_manifest.json> <output.arc>");
+        Console.WriteLine("  link repack6 <input-dir> <_link_manifest.json> <output.arc> [--compress|--no-compress] [--encrypt|--no-encrypt] [--params params.dat]");
     }
 
     private static string? GetOption(string[] args, string name)
@@ -266,6 +283,31 @@ public static class LinkCommands
                 continue;
             }
 
+            if (string.Equals(args[i], "--keep-encryption-flags", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.Equals(args[i], "--compress", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(args[i], "--no-compress", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(args[i], "--encrypt", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(args[i], "--no-encrypt", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.Equals(args[i], "--params", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    Console.Error.WriteLine($"Missing value for option: {args[i]}");
+                    return false;
+                }
+
+                i++;
+                continue;
+            }
+
             if (!string.Equals(args[i], "--name", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(args[i], "--flags", StringComparison.OrdinalIgnoreCase))
             {
@@ -283,5 +325,28 @@ public static class LinkCommands
         }
 
         return true;
+    }
+
+    private static bool LinkManifestHasCompressedEntries(string manifestPath) =>
+        LinkArchiveManifestWriter.Read(manifestPath).Entries.Any(entry => (entry.EntryFlags & 3) != 0);
+
+    private static bool LinkManifestHasEncryptedEntries(string manifestPath) =>
+        LinkArchiveManifestWriter.Read(manifestPath).Entries.Any(entry => (entry.EntryFlags & 4) != 0);
+
+    private static byte[] ReadLinkEncryptionKey(string? paramsPath)
+    {
+        if (string.IsNullOrWhiteSpace(paramsPath))
+        {
+            throw new InvalidDataException("LINK repack needs params.dat to re-encrypt entries. Pass --params <params.dat>, use --game-root, or choose --no-encrypt.");
+        }
+
+        var fullPath = Path.GetFullPath(paramsPath);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException($"params.dat was not found for LINK encryption: {fullPath}", fullPath);
+        }
+
+        var document = new ParamsDatCodec().Read(File.ReadAllBytes(fullPath));
+        return Convert.FromBase64String(document.GameSystem.RawBlob.LinkXorKeyBase64);
     }
 }

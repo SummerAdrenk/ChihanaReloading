@@ -10,25 +10,24 @@
 //   [0x08] 4B  OffsetY (int32)
 //   [0x0C] 4B  Width (int32)
 //   [0x10] 4B  Height (int32)
-//   [0x14] 4B  HeaderExtra (int32, 用途未知, 重打包时原样写回)
+//   [0x14] 4B  HeaderSize (int32, fixed 0x18)
 //   [0x18] ...  BGRA 像素数据 (每像素 4 字节, 自底向上排列)
 //
 // 转换 (Convert):
 //   读取 BGRA 像素数据, 直接保存为 PNG
-//   返回 Metadata: OffsetX/Y, Width/Height, HeaderExtra
+//   返回 Metadata: OffsetX/Y, Width/Height
 //
 // 重打包 (Repack):
 //   从 PNG 读取 BGRA 像素, 写入 AP-2 头 + 像素数据
 //
 // 依赖: BitmapHelpers, PicturePathHelper, System.Drawing
 // ============================================================================
-using System.Drawing;
-
 namespace Kaguya_YaneKit.Formats.Picture.Handlers;
 
 public sealed class Ap2Handler : IFormatHandler
 {
     public string Tag => "ap2";
+    private const int HeaderSize = 0x18;
 
     public sealed class Metadata
     {
@@ -36,7 +35,6 @@ public sealed class Ap2Handler : IFormatHandler
         public int Height { get; set; }
         public int OffsetX { get; set; }
         public int OffsetY { get; set; }
-        public int HeaderExtra { get; set; }
     }
 
     public bool Identify(BinaryReader reader)
@@ -58,30 +56,41 @@ public sealed class Ap2Handler : IFormatHandler
             Width = reader.ReadInt32(),
             Height = reader.ReadInt32()
         };
-        metadata.HeaderExtra = reader.ReadInt32();
-        stream.Position = 0x18;
-        var pixelData = reader.ReadBytes(metadata.Width * metadata.Height * 4);
-        BitmapHelpers.SavePngFromBottomUpPixels(pixelData, metadata.Width, metadata.Height, Path.ChangeExtension(destPath, ".png"));
+        var headerSize = reader.ReadInt32();
+        if (headerSize != HeaderSize)
+        {
+            throw new InvalidDataException($"Unsupported AP-2 header size field at 0x14: 0x{headerSize:X8}");
+        }
+
+        stream.Position = HeaderSize;
+        var expectedSize = checked(metadata.Width * metadata.Height * 4);
+        var pixelData = reader.ReadBytes(expectedSize);
+        if (pixelData.Length != expectedSize)
+        {
+            throw new EndOfStreamException("Failed to read AP-2 pixel payload.");
+        }
+
+        BitmapHelpers.SavePngFromBottomUpPixels(pixelData, metadata.Width, metadata.Height, PicturePathHelper.ChangeExtensionPreservingName(destPath, ".png"));
         return metadata;
     }
 
     public void Repack(string sourcePath, string destFile)
     {
         var pngPath = sourcePath + ".png";
-        var jsonPath = PicturePathHelper.GetMetadataPathForSource(sourcePath);
+        var jsonPath = PicturePathHelper.GetMetadataPathForSource(pngPath);
         if (!File.Exists(pngPath)) throw new FileNotFoundException($"Missing PNG for repack: {pngPath}");
         if (!File.Exists(jsonPath)) throw new FileNotFoundException($"Missing JSON metadata for repack: {jsonPath}");
 
         var metadata = System.Text.Json.JsonSerializer.Deserialize<Metadata>(File.ReadAllText(jsonPath)) ?? throw new InvalidDataException("Failed to parse JSON metadata.");
-        using var image = Image.FromFile(pngPath);
+        var bgra = BitmapHelpers.ReadBottomUpPixelsFromImage(pngPath, out var width, out var height);
         using var stream = File.Create(destFile);
         using var writer = new BinaryWriter(stream);
         writer.Write(0x322D5041);
         writer.Write(metadata.OffsetX);
         writer.Write(metadata.OffsetY);
-        writer.Write(image.Width);
-        writer.Write(image.Height);
-        writer.Write(metadata.HeaderExtra);
-        writer.Write(BitmapHelpers.ReadBottomUpPixelsFromImage(pngPath));
+        writer.Write(width);
+        writer.Write(height);
+        writer.Write(HeaderSize);
+        writer.Write(bgra);
     }
 }

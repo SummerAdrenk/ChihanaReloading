@@ -21,6 +21,9 @@
 #include <cstdio>
 #include <cstdint>
 #include <clocale>
+#include <functional>
+#include <string>
+#include <vector>
 #include <windows.h>
 #include "tp_stub.h"
 
@@ -166,6 +169,399 @@ HMODULE LoadLibraryW_hook(LPCWSTR name)
     return hmod;
 }
 
+enum RegexNodeType
+{
+    RegexNodeLiteral,
+    RegexNodeCharSet,
+    RegexNodeSequence,
+    RegexNodeAlternation,
+    RegexNodeRepeat,
+};
+
+struct RegexNode
+{
+    RegexNodeType type = RegexNodeSequence;
+    std::wstring literal;
+    std::vector<wchar_t> chars;
+    std::vector<RegexNode> children;
+    int min_repeat = 0;
+    int max_repeat = 0;
+};
+
+class FiniteRegexParser
+{
+public:
+    explicit FiniteRegexParser(const wchar_t* pattern) : m_pattern(pattern), m_len(wcslen(pattern)) {}
+
+    bool parse(RegexNode& out)
+    {
+        out = parse_expression();
+        return m_ok && m_pos == m_len;
+    }
+
+private:
+    const wchar_t* m_pattern;
+    size_t m_len = 0;
+    size_t m_pos = 0;
+    bool m_ok = true;
+
+    RegexNode parse_expression()
+    {
+        std::vector<RegexNode> alternatives;
+        while (m_ok)
+        {
+            alternatives.push_back(parse_sequence());
+            if (m_pos >= m_len || m_pattern[m_pos] != L'|') break;
+            m_pos++;
+        }
+
+        if (alternatives.size() == 1) return alternatives[0];
+
+        RegexNode node;
+        node.type = RegexNodeAlternation;
+        node.children = alternatives;
+        return node;
+    }
+
+    RegexNode parse_sequence()
+    {
+        RegexNode node;
+        node.type = RegexNodeSequence;
+        while (m_ok && m_pos < m_len && m_pattern[m_pos] != L')' && m_pattern[m_pos] != L'|')
+        {
+            if (m_pattern[m_pos] == L'^' || m_pattern[m_pos] == L'$')
+            {
+                m_pos++;
+                continue;
+            }
+            node.children.push_back(parse_quantifier(parse_atom()));
+        }
+        return node;
+    }
+
+    RegexNode parse_atom()
+    {
+        RegexNode node;
+        if (m_pos >= m_len)
+        {
+            m_ok = false;
+            return node;
+        }
+
+        wchar_t ch = m_pattern[m_pos++];
+        if (ch == L'(')
+        {
+            node = parse_expression();
+            if (m_pos >= m_len || m_pattern[m_pos] != L')')
+            {
+                m_ok = false;
+                return node;
+            }
+            m_pos++;
+            return node;
+        }
+
+        if (ch == L'[')
+        {
+            node.type = RegexNodeCharSet;
+            if (m_pos < m_len && m_pattern[m_pos] == L'^')
+            {
+                m_ok = false;
+                return node;
+            }
+
+            while (m_ok && m_pos < m_len && m_pattern[m_pos] != L']')
+            {
+                wchar_t first = read_class_char();
+                if (m_pos + 1 < m_len && m_pattern[m_pos] == L'-' && m_pattern[m_pos + 1] != L']')
+                {
+                    m_pos++;
+                    wchar_t last = read_class_char();
+                    if (first > last)
+                    {
+                        m_ok = false;
+                        break;
+                    }
+                    for (wchar_t c = first; c <= last; c++)
+                        node.chars.push_back(c);
+                }
+                else
+                {
+                    node.chars.push_back(first);
+                }
+            }
+
+            if (m_pos >= m_len || m_pattern[m_pos] != L']')
+            {
+                m_ok = false;
+                return node;
+            }
+            m_pos++;
+            return node;
+        }
+
+        if (ch == L'\\')
+        {
+            if (m_pos >= m_len)
+            {
+                m_ok = false;
+                return node;
+            }
+
+            wchar_t escaped = m_pattern[m_pos++];
+            if (escaped == L'd')
+            {
+                node.type = RegexNodeCharSet;
+                for (wchar_t c = L'0'; c <= L'9'; c++) node.chars.push_back(c);
+                return node;
+            }
+            if (escaped == L'w')
+            {
+                node.type = RegexNodeCharSet;
+                for (wchar_t c = L'0'; c <= L'9'; c++) node.chars.push_back(c);
+                for (wchar_t c = L'A'; c <= L'Z'; c++) node.chars.push_back(c);
+                for (wchar_t c = L'a'; c <= L'z'; c++) node.chars.push_back(c);
+                node.chars.push_back(L'_');
+                return node;
+            }
+
+            node.type = RegexNodeLiteral;
+            node.literal.assign(1, escaped);
+            return node;
+        }
+
+        if (ch == L'.' || ch == L'*' || ch == L'+')
+        {
+            m_ok = false;
+            return node;
+        }
+
+        node.type = RegexNodeLiteral;
+        node.literal.assign(1, ch);
+        return node;
+    }
+
+    RegexNode parse_quantifier(RegexNode atom)
+    {
+        if (!m_ok || m_pos >= m_len) return atom;
+
+        if (m_pattern[m_pos] == L'?')
+        {
+            m_pos++;
+            RegexNode node;
+            node.type = RegexNodeRepeat;
+            node.children.push_back(atom);
+            node.min_repeat = 0;
+            node.max_repeat = 1;
+            return node;
+        }
+
+        if (m_pattern[m_pos] != L'{') return atom;
+
+        m_pos++;
+        int min_repeat = parse_number();
+        int max_repeat = min_repeat;
+        if (m_pos < m_len && m_pattern[m_pos] == L',')
+        {
+            m_pos++;
+            max_repeat = parse_number();
+        }
+        if (m_pos >= m_len || m_pattern[m_pos] != L'}' || min_repeat < 0 || max_repeat < min_repeat)
+        {
+            m_ok = false;
+            return atom;
+        }
+        m_pos++;
+
+        RegexNode node;
+        node.type = RegexNodeRepeat;
+        node.children.push_back(atom);
+        node.min_repeat = min_repeat;
+        node.max_repeat = max_repeat;
+        return node;
+    }
+
+    int parse_number()
+    {
+        if (m_pos >= m_len || m_pattern[m_pos] < L'0' || m_pattern[m_pos] > L'9')
+        {
+            m_ok = false;
+            return -1;
+        }
+
+        int value = 0;
+        while (m_pos < m_len && m_pattern[m_pos] >= L'0' && m_pattern[m_pos] <= L'9')
+        {
+            value = value * 10 + (m_pattern[m_pos] - L'0');
+            m_pos++;
+        }
+        return value;
+    }
+
+    wchar_t read_class_char()
+    {
+        if (m_pos >= m_len)
+        {
+            m_ok = false;
+            return 0;
+        }
+
+        if (m_pattern[m_pos] == L'\\')
+        {
+            m_pos++;
+            if (m_pos >= m_len)
+            {
+                m_ok = false;
+                return 0;
+            }
+        }
+        return m_pattern[m_pos++];
+    }
+};
+
+static bool expand_regex_node(const RegexNode& node, std::wstring& current,
+    const std::function<bool(const std::wstring&)>& callback);
+
+static bool expand_regex_sequence(const std::vector<RegexNode>& children, size_t index,
+    std::wstring& current, const std::function<bool(const std::wstring&)>& callback)
+{
+    if (index >= children.size()) return callback(current);
+    return expand_regex_node(children[index], current, [&](const std::wstring&) {
+        return expand_regex_sequence(children, index + 1, current, callback);
+    });
+}
+
+static bool expand_regex_repeat(const RegexNode& child, int remaining, std::wstring& current,
+    const std::function<bool(const std::wstring&)>& callback)
+{
+    if (remaining == 0) return callback(current);
+    return expand_regex_node(child, current, [&](const std::wstring&) {
+        return expand_regex_repeat(child, remaining - 1, current, callback);
+    });
+}
+
+static bool expand_regex_node(const RegexNode& node, std::wstring& current,
+    const std::function<bool(const std::wstring&)>& callback)
+{
+    size_t old_size = current.size();
+    switch (node.type)
+    {
+    case RegexNodeLiteral:
+        current += node.literal;
+        if (!callback(current)) return false;
+        current.resize(old_size);
+        return true;
+    case RegexNodeCharSet:
+        for (wchar_t ch : node.chars)
+        {
+            current.push_back(ch);
+            if (!callback(current)) return false;
+            current.resize(old_size);
+        }
+        return true;
+    case RegexNodeSequence:
+        return expand_regex_sequence(node.children, 0, current, callback);
+    case RegexNodeAlternation:
+        for (const auto& child : node.children)
+        {
+            current.resize(old_size);
+            if (!expand_regex_node(child, current, callback)) return false;
+        }
+        current.resize(old_size);
+        return true;
+    case RegexNodeRepeat:
+        for (int i = node.min_repeat; i <= node.max_repeat; i++)
+        {
+            current.resize(old_size);
+            if (!expand_regex_repeat(node.children[0], i, current, callback)) return false;
+        }
+        current.resize(old_size);
+        return true;
+    }
+    return false;
+}
+
+// Per-regex safety limit. This is not the old enumeration size; it prevents user-authored regex rules from exploding.
+static const size_t REGEX_EXPANSION_LIMIT = 10000;
+
+static size_t add_regex_count(size_t a, size_t b)
+{
+    if(a > REGEX_EXPANSION_LIMIT || b > REGEX_EXPANSION_LIMIT ||
+        a > REGEX_EXPANSION_LIMIT + 1 - b)
+        return REGEX_EXPANSION_LIMIT + 1;
+    return a + b;
+}
+
+static size_t multiply_regex_count(size_t a, size_t b)
+{
+    if(a == 0 || b == 0) return 0;
+    if(a > REGEX_EXPANSION_LIMIT || b > REGEX_EXPANSION_LIMIT ||
+        a > (REGEX_EXPANSION_LIMIT + 1) / b)
+        return REGEX_EXPANSION_LIMIT + 1;
+    return a * b;
+}
+
+static size_t pow_regex_count(size_t value, int exponent)
+{
+    size_t result = 1;
+    for(int i = 0; i < exponent; i++)
+        result = multiply_regex_count(result, value);
+    return result;
+}
+
+static size_t count_regex_node(const RegexNode& node)
+{
+    switch(node.type)
+    {
+    case RegexNodeLiteral:
+        return 1;
+    case RegexNodeCharSet:
+        return node.chars.size();
+    case RegexNodeSequence:
+    {
+        size_t total = 1;
+        for(const auto& child : node.children)
+            total = multiply_regex_count(total, count_regex_node(child));
+        return total;
+    }
+    case RegexNodeAlternation:
+    {
+        size_t total = 0;
+        for(const auto& child : node.children)
+            total = add_regex_count(total, count_regex_node(child));
+        return total;
+    }
+    case RegexNodeRepeat:
+    {
+        size_t child_count = count_regex_node(node.children[0]);
+        size_t total = 0;
+        for(int i = node.min_repeat; i <= node.max_repeat; i++)
+            total = add_regex_count(total, pow_regex_count(child_count, i));
+        return total;
+    }
+    }
+    return REGEX_EXPANSION_LIMIT + 1;
+}
+
+static bool expand_regex_pattern(const wchar_t* pattern, size_t* out_count,
+    const std::function<bool(const std::wstring&)>& callback)
+{
+    RegexNode root;
+    FiniteRegexParser parser(pattern);
+    if (!parser.parse(root)) return false;
+
+    size_t expected_count = count_regex_node(root);
+    if(out_count) *out_count = expected_count;
+    if(expected_count > REGEX_EXPANSION_LIMIT) return false;
+
+    size_t expanded = 0;
+    std::wstring current;
+    return expand_regex_node(root, current, [&](const std::wstring& value) {
+        if (++expanded > REGEX_EXPANSION_LIMIT) return false;
+        return callback(value);
+    });
+}
+
 const wchar_t* WINAPI calc_name_hexify(Hxv4CompoundHasher *hasher, tTJSString *seed, const wchar_t* name)
 {
     static wchar_t hashstrw[0x64] = {0};
@@ -178,6 +574,16 @@ const wchar_t* WINAPI calc_name_hexify(Hxv4CompoundHasher *hasher, tTJSString *s
     return hashstrw;
 }
 
+static void write_hash_line(FILE* fp, Hxv4CompoundHasher *hasher, tTJSString *seed, const wchar_t* name)
+{
+    const wchar_t *hashstrw = calc_name_hexify(hasher, seed, name);
+    LOGLi(L"%ls,%ls\n", name, hashstrw);
+    fwrite(name, 2, wcslen(name), fp);
+    fwrite(L",", 2, 1, fp);
+    fwrite(hashstrw, 2, wcslen(hashstrw), fp);
+    fwrite(L"\r\n", 2, 2, fp);
+}
+
 DWORD WINAPI calc_list(Hxv4CompoundHasher *hasher, tTJSString *seed, const char *inpath, const char *outpath)
 {
     int i = 0;
@@ -185,20 +591,48 @@ DWORD WINAPI calc_list(Hxv4CompoundHasher *hasher, tTJSString *seed, const char 
     static wchar_t linestrw[0x200];
     FILE *fp1 = fopen(inpath, "rb");
     FILE *fp2 = fopen(outpath, "wb");
+    if(!fp1 || !fp2)
+    {
+        if(fp1) fclose(fp1);
+        if(fp2) fclose(fp2);
+        LOGe("open list failed %s -> %s\n", inpath, outpath);
+        return 0;
+    }
     fwrite("\xff\xfe", 1, 2, fp2);
     fread(&bom, 2, 1, fp1);
     if(bom != 0xfeff) fseek(fp1, 0, SEEK_SET);
     while(fgetws(linestrw, sizeof(linestrw)/2, fp1))
     {
-        i++;
-        if (linestrw[wcslen(linestrw)-2] == L'\r') linestrw[wcslen(linestrw)-2] = 0;
-        if (linestrw[wcslen(linestrw)-1] == L'\n') linestrw[wcslen(linestrw)-1] = 0;
-        const wchar_t *hashstrw = calc_name_hexify(hasher, seed, linestrw);
-        LOGLi(L"%ls,%ls\n", linestrw, hashstrw);
-        fwrite(linestrw, 2, wcslen(linestrw), fp2); // fwprintf has problem
-        fwrite(L",", 2, 1, fp2);
-        fwrite(hashstrw, 2, wcslen(hashstrw), fp2);
-        fwrite(L"\r\n", 2, 2, fp2);
+        size_t len = wcslen(linestrw);
+        while(len > 0 && (linestrw[len - 1] == L'\r' || linestrw[len - 1] == L'\n'))
+            linestrw[--len] = 0;
+        if(len == 0) continue;
+
+        if(_wcsnicmp(linestrw, L"regex:", 6) == 0)
+        {
+            int regex_count = 0;
+            size_t expected_count = 0;
+            LOGLi(L"expand regex: %ls\n", linestrw + 6);
+            bool ok = expand_regex_pattern(linestrw + 6, &expected_count, [&](const std::wstring& name) {
+                write_hash_line(fp2, hasher, seed, name.c_str());
+                i++;
+                regex_count++;
+                return true;
+            });
+            if(!ok)
+            {
+                LOGLi(L"regex expand failed or exceeded limit (%zu): %ls\n", expected_count, linestrw + 6);
+            }
+            else
+            {
+                LOGi("regex expanded %d names\n", regex_count);
+            }
+        }
+        else
+        {
+            write_hash_line(fp2, hasher, seed, linestrw);
+            i++;
+        }
         fflush(fp2);
     }
     fclose(fp1);
